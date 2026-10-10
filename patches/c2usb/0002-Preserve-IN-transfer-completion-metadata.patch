@@ -1,0 +1,31 @@
+From 7fc3cc2b2e1a4772a1da7236cd304723f569f1d1 Mon Sep 17 00:00:00 2001
+From: Ryan Sommers <ryans@rpsommers.com>
+Date: Sat, 10 Oct 2026 10:54:08 -0600
+Subject: [PATCH] zephyr: preserve IN transfer completion metadata
+
+---
+ c2usb/port/zephyr/udc_mac.cpp | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/c2usb/port/zephyr/udc_mac.cpp b/c2usb/port/zephyr/udc_mac.cpp
+index 79a9578..e738346 100644
+--- a/c2usb/port/zephyr/udc_mac.cpp
++++ b/c2usb/port/zephyr/udc_mac.cpp
+@@ -805,8 +805,13 @@ void udc_mac::process_ep_event(net_buf* buf)
+         {
+             if (ep_bufs_[i] == buf)
+             {
++                // IN drivers consume data/len as packets are transmitted.
++                // ep_transfer() preserves the submitted buffer in __buf/size.
++                // OUT len remains the number of received bytes.
++                const bool in = addr.direction() == direction::IN;
+                 return ep_transfer_complete(
+-                    addr, transfer(buf->data, buf->len, info.err == 0, create_ep_handle(i + 1)));
++                    addr, transfer(in ? buf->__buf : buf->data, in ? buf->size : buf->len,
++                                   info.err == 0, create_ep_handle(i + 1)));
+             }
+         }
+         assert(ep_bufs_.size() == 0); // a net_buf was issued out of c2usb scope
+-- 
+2.43.0
+
