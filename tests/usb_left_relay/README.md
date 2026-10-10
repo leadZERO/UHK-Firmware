@@ -71,6 +71,96 @@ change requiring delivery. It covers completion ownership before main-thread
 drain, cancelled reports, stale route/USB generations and selected BLE delivery.
 The original completion path fails this regression.
 
+The wireless integration regression compiles both UHK endpoint roles:
+
+```bash
+bash tests/usb_left_relay/run_wireless.sh
+```
+
+It uses the actual transport selector, transmit queue/worker, ingress guards,
+link-generation observation and Messenger dispatch with the real portable
+protocol. Mock radio delivery adds 20 ms in each direction. Coverage includes
+wireless-only boot and idle leases, bridge preference, inactive BLE changes,
+queued old-route reports, blocked USB drains, fresh tokens during fallback and
+bridge restoration, reconnect generations, wrong peers, loss of both links,
+key-up delivery, and rejection of unencrypted/undersized ATT connections. The
+left NUS notification test fails if relay messages broadcast instead of targeting
+the paired right half. These fakes do not establish real radio timing or pairing.
+It also covers transient and perpetual Bluetooth-slot contention, the transmit
+worker's 32 ms retry bound, and route loss while a retry owns its immutable bytes.
+
+The Bluetooth send-contention regression uses the actual NUS send methods:
+
+```bash
+bash tests/usb_left_relay/run_nus_contention.sh
+```
+
+It checks nonblocking relay acquisition, bounded failure for legacy callers,
+ownership of semaphore slots on busy/error/oversize paths, and persistent client
+payload storage while an asynchronous GATT write is pending. Stack-use-after-return
+detection is enabled. Relay transmit work runs on a dedicated queue so transport
+allocation/waits cannot block Bluetooth completion work on the system queue.
+
+```bash
+bash tests/usb_left_relay/run_wireless_latency.sh
+```
+
+This compiles the actual Bluetooth profile selection/application methods. It
+checks the selected awake wireless left host requests interval 6 (7.5 ms) with
+zero peripheral latency, unchanged selections do not renegotiate, bridge or
+suspended-host transitions restore NUS defaults, and unrelated host profiles
+retain their existing rules. Actual negotiated timing still needs measurement.
+
+```bash
+bash tests/usb_left_relay/run_usb_power_startup.sh
+```
+
+With the pinned c2usb sources, this compiles the actual initial regulator-state
+expression and SDK start/attach methods. Disconnected power must not enable the
+controller; both detected and already-ready VBUS must attach without requiring
+a new power edge. The original CONNECTED-only expression fails the READY case.
+This startup test does not establish runtime cable reconnect behavior.
+With the third c2usb patch applied, it also compiles actual VBUS reconciliation
+and event handling: missing insert/remove edges, idempotence, intentionally
+inactive devices, and the application service's generation-drain gate. The
+physical bridge/USB sequence remains a required hardware test.
+
+```bash
+bash tests/usb_left_relay/run_nrf_usb_ready.sh
+```
+
+This compiles the actual Nordic power-handler, enable and start methods. It
+reproduces READY arriving before deferred controller enable: the driver must
+not start a disabled peripheral, and later enable must inspect the already-ready
+regulator and start without another edge. Normal enable-before-READY and
+duplicate/disabled READY cases are also covered. The original driver fails
+the ready-before-enable regression.
+The fourth Nordic patch restores normal register access on fresh peripheral
+enable. The regression compiles that actual method and checks retained LOWPOWER
+before attachment. Register mocks do not simulate the complete hardware bus;
+physical reconnect remains a required acceptance test.
+
+```bash
+bash tests/usb_left_relay/run_usb_control_retirement.sh
+```
+
+This compiles the actual c2usb attach/reset/barrier and SETUP-arm methods, plus
+Zephyr's control SETUP, enqueue, dequeue and disable methods. It verifies that
+the pinned API uses c2usb's fixed control buffers. Retained EP0 OUT STATUS/DATA
+cannot prevent SETUP rearming after a detach or a bus reset with VBUS maintained
+by the bridge. Cancellation events drain before the fixed buffers are reused,
+including when READY was already queued. Disable discards cached SETUP from the
+old attachment; a fresh SETUP received during a powered reset's retirement is
+preserved. Closing or removing power before the barrier does not reopen USB.
+The actual worker and nonblocking barrier-post/retry methods also run against a
+full event queue. Completion notifications fill the queue and a producer takes
+the first freed slot; the worker must continue draining and append the barrier
+later, keeping fixed buffers retired until it is consumed. The preceding
+blocking barrier fails this case instead of making progress.
+The preceding SDK fails the retained-control and cached-SETUP regressions.
+ASan/UBSan cover the test harness; mocked endpoint/worker queues do not establish
+physical reconnect behavior.
+
 These tests do not execute the full Zephyr/c2usb C++ adapter, Nordic UDC driver,
 physical key scanner or native Windows updater. Firmware builds check adapter
 integration; the hardware matrix in the

@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: UHK SDK Setup <setup@localhost>
+Date: Fri, 9 Oct 2026 18:00:00 -0600
+Subject: [PATCH] Reconcile observed VBUS on the USB worker
+
+Allow platform code to reconcile an observed VBUS level with a stale MAC power
+state when a power edge was missed. Reuse normal attach/detach event handling,
+and do not attach an intentionally inactive device. Call only on the USB worker.
+
+diff --git a/c2usb/port/zephyr/udc_mac.hpp b/c2usb/port/zephyr/udc_mac.hpp
+--- a/c2usb/port/zephyr/udc_mac.hpp
++++ b/c2usb/port/zephyr/udc_mac.hpp
+@@ -27,6 +27,10 @@ class udc_mac : public df::mac
+     udc_mac(const ::device* dev, size_t ctrl_ep_buf_size, usb::power::state power_state);
+     ~udc_mac() override;
+ 
++    /// Reconcile a platform-observed VBUS level. USB worker context only.
++    /// Returns true when normal attach/detach handling was run.
++    bool synchronize_vbus(bool present);
++
+     /// @brief Queues a task to be executed in the USB thread context.
+     /// @param task the callable to execute
+     /// @return OK if the task was queued, -ENOMSG if the queue is full
+diff --git a/c2usb/port/zephyr/udc_mac.cpp b/c2usb/port/zephyr/udc_mac.cpp
+--- a/c2usb/port/zephyr/udc_mac.cpp
++++ b/c2usb/port/zephyr/udc_mac.cpp
+@@ -556,6 +556,18 @@ int udc_mac::event_callback(const udc_event& event)
+     return mac->process_event(event);
+ }
+ 
++bool udc_mac::synchronize_vbus(bool present)
++{
++    if (!active() or (present == (power_state() != power::state::L3_OFF)))
++    {
++        return false;
++    }
++    udc_event event{};
++    event.dev = dev_;
++    event.type = present ? UDC_EVT_VBUS_READY : UDC_EVT_VBUS_REMOVED;
++    return process_event(event) == 0;
++}
++
+ int udc_mac::process_event(const udc_event& event)
+ {
+     switch (event.type)

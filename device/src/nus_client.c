@@ -189,7 +189,10 @@ int NusClient_SendMessage(message_t* msg) {
         return -1;
     }
 
-    SEM_TAKE(&nusBusy);
+    bool relayMessage = msg->idsUsed && msg->messageId[0] == MessageId_UsbLeftRelay;
+    if (k_sem_take(&nusBusy, relayMessage ? K_NO_WAIT : K_MSEC(256))) {
+        return -EAGAIN;
+    }
 
     // From here on every exit path must release the semaphore: send_raw_buffer
     // gives it back on error, and the `sent` callback gives it back on success.
@@ -197,7 +200,9 @@ int NusClient_SendMessage(message_t* msg) {
     // Call this only after we have taken the semaphore.
     Messenger_UpdateWatermarks(msg);
 
-    uint8_t buffer[MAX_LINK_PACKET_LENGTH];
+    // GATT retains the write parameters/data until the sent callback. This
+    // singleton slot is protected by nusBusy across asynchronous completion.
+    static uint8_t buffer[MAX_LINK_PACKET_LENGTH];
     uint8_t bufferIdx = 0;
 
     buffer[bufferIdx++] = msg->src;

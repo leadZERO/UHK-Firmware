@@ -568,6 +568,12 @@ static int cmd_uhk_usbLeft(const struct shell *shell,size_t argc,char *argv[]) {
 #endif
     }
     const relay_t *r=UsbLeft_GetState();
+    uint8_t linkConnection = UsbLeft_LinkConnection();
+    connection_type_t linkType = Connections_Type(linkConnection);
+    const char *transport = linkConnection == ConnectionId_Invalid ? "none"
+        : (linkType == ConnectionType_UartLeft || linkType == ConnectionType_UartRight) ? "bridge" : "bluetooth";
+    shell_print(shell,"transport=%s connection=%u linkGeneration=%u",transport,linkConnection,
+        UsbLeft_IngressGeneration(linkConnection));
     shell_print(shell,"USB left: link=%u negotiated=%u configured=%u awake=%u active=%u quiescent=%u pending=%u",
         r->link,r->negotiated,!!(r->usb.flags&RelayFlag_Configured),UsbLeft_Awake(),UsbLeft_Active(),r->quiescent,UsbLeft_Pending());
     shell_print(shell,"generation=%u selection=%u retries=%u rejected=%u duplicates=%u faults=%u reason=%u",

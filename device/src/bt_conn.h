@@ -54,6 +54,7 @@ typedef enum {
     LatencyMode_NUS,
     LatencyMode_BleHid,
     LatencyMode_Idle,
+    LatencyMode_UsbLeftRelay,
 } latency_mode_t;
 
 // Variables:

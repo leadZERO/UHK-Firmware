@@ -9,12 +9,13 @@ config UHK_BATTERY_DEVICE
     imply ADC
 
 config UHK_USB_LEFT_RELAY
-    bool "Experimental wired USB Left host relay"
+    bool "Experimental USB Left host relay"
     depends on BOARD_UHK_80_LEFT || BOARD_UHK_80_RIGHT
     default n
     help
       Connect a second USB computer to the left half and relay input over the
-      inter-half cable. Both halves must run compatible relay firmware.
+      inter-half cable, or the paired inter-half Bluetooth link when the cable
+      is unavailable. Both halves must run compatible relay firmware.
 
 config UHK_USB_LEFT_DEV_SLOT
     bool "Provision a volatile USB Left host slot for development"

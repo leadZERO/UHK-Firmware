@@ -1,0 +1,253 @@
+From e6e47280f9506c398775419a4a833d158689d102 Mon Sep 17 00:00:00 2001
+From: UHK SDK Setup <setup@localhost>
+Date: Fri, 9 Oct 2026 20:04:35 -0600
+Subject: [PATCH] Trace control enumeration header metadata
+
+---
+ c2usb/port/zephyr/udc_mac.cpp | 111 ++++++++++++++++++++++++++++++++++
+ c2usb/port/zephyr/udc_mac.hpp |   3 +
+ 2 files changed, 114 insertions(+)
+
+diff --git a/c2usb/port/zephyr/udc_mac.cpp b/c2usb/port/zephyr/udc_mac.cpp
+index a759f95..371a1f8 100644
+--- a/c2usb/port/zephyr/udc_mac.cpp
++++ b/c2usb/port/zephyr/udc_mac.cpp
+@@ -33,6 +33,35 @@ using namespace usb::df;
+ 
+ LOG_MODULE_REGISTER(c2usb, CONFIG_C2USB_UDC_MAC_LOG_LEVEL);
+ 
++#ifdef CONFIG_UHK_USB_LEFT_RELAY
++extern "C" {
++atomic_t UhkUsbCtrlDiag[12];
++atomic_t UhkUsbCtrlTraceCount;
++atomic_t UhkUsbCtrlTrace[64][6];
++}
++static void uhk_control_trace(uint32_t event, uint32_t lo, uint32_t hi, uint32_t detail)
++{
++    uint32_t seq = uint32_t(atomic_inc(&UhkUsbCtrlTraceCount)) + 1;
++    auto* record = UhkUsbCtrlTrace[(seq - 1) % 64];
++    atomic_set(&record[0], 0);
++    atomic_set(&record[1], k_uptime_get_32());
++    atomic_set(&record[2], event);
++    atomic_set(&record[3], lo);
++    atomic_set(&record[4], hi);
++    atomic_set(&record[5], detail);
++    atomic_set(&record[0], seq); // publish after the header/metadata fields
++}
++static uint32_t uhk_stage(const udc_buf_info& info)
++{
++    return info.setup ? 1 : info.data ? 2 : info.status ? 3 : 0;
++}
++#define UHK_CONTROL_TRACE(...) uhk_control_trace(__VA_ARGS__)
++#define UHK_CONTROL_COUNT(index) atomic_inc(&UhkUsbCtrlDiag[index])
++#else
++#define UHK_CONTROL_TRACE(...) ((void)0)
++#define UHK_CONTROL_COUNT(index) ((void)0)
++#endif
++
+ static constexpr ::udc_event_type UDC_MAC_TASK = (udc_event_type)-1;
+ static constexpr ::udc_event_type UDC_MAC_CONTROL_RETIRED = (udc_event_type)-2;
+ // Only the USB worker changes this registry. Two entries match supported MAC
+@@ -119,7 +148,23 @@ static void set_ctrl_stage(::net_buf* buf, control::stage stage)
+ 
+ static int udc_buf_enqueue(const ::device* dev, ::net_buf* buf)
+ {
++#ifdef CONFIG_UHK_USB_LEFT_RELAY
++    // Enqueue can deliver cached SETUP immediately or start an asynchronous
++    // transfer. Snapshot metadata before ownership passes to the driver.
++    const auto& submitted_info = *udc_get_buf_info(buf);
++    const bool control = (submitted_info.ep & 0x0f) == 0;
++    const uint32_t submitted = uint32_t(buf->len) |
++        (uhk_stage(submitted_info) << 16) | (uint32_t(submitted_info.ep) << 24);
++#endif
+     auto ret = udc_ep_enqueue(dev, buf);
++#ifdef CONFIG_UHK_USB_LEFT_RELAY
++    if (control)
++    {
++        UHK_CONTROL_TRACE(ret ? 4 : 3, ret ? submitted : 0, 0,
++            ret ? uint32_t(ret) : submitted);
++        if (ret) { UHK_CONTROL_COUNT(4); }
++    }
++#endif
+     if (ret != 0)
+     {
+         LOG_ERR("Failed to enqueue ep 0x%02x: %d", udc_get_buf_info(buf)->ep, ret);
+@@ -354,6 +399,8 @@ void udc_mac::retire_control()
+     // control queues before rearming; keep fixed buffers owned until all
+     // completions from the previous transaction have passed the worker.
+     control_retiring_ = true;
++    UHK_CONTROL_COUNT(5);
++    UHK_CONTROL_TRACE(6, 0, 0, 0);
+     [[maybe_unused]] auto ret = udc_ep_dequeue(dev_, USB_CONTROL_EP_IN);
+     assert(ret == 0 and "Failed to retire control IN");
+     ret = udc_ep_dequeue(dev_, USB_CONTROL_EP_OUT);
+@@ -377,6 +424,14 @@ void udc_mac::try_queue_control_retirement()
+     // The retirement guard remains closed until that ordered event is read.
+     udc_event event{.type = UDC_MAC_CONTROL_RETIRED, .dev = dev_};
+     control_barrier_queued_ = message_queue().try_post(event);
++    if (control_barrier_queued_)
++    {
++        UHK_CONTROL_TRACE(7, 0, 0, 0);
++    }
++    else
++    {
++        UHK_CONTROL_COUNT(6);
++    }
+ }
+ 
+ void udc_mac::retry_control_retirements()
+@@ -401,6 +456,8 @@ void udc_mac::finish_control_retirement()
+     }
+     control_barrier_queued_ = false;
+     control_retiring_ = false;
++    UHK_CONTROL_COUNT(7);
++    UHK_CONTROL_TRACE(8, 0, 0, udc_is_enabled(dev_));
+     if (active() and power_state() != power::state::L3_OFF)
+     {
+         if (udc_is_enabled(dev_))
+@@ -456,6 +513,8 @@ uint16_t udc_mac::control_ep_max_packet_size(usb::speed speed) const
+ void udc_mac::ctrl_stall(net_buf* buf, int err)
+ {
+     diag::record(diag::CTRL_STALL, 0, err);
++    UHK_CONTROL_COUNT(2);
++    UHK_CONTROL_TRACE(9, 0, 0, uint32_t(err));
+     auto addr = endpoint::address::control_in();
+     if ((request().direction() == usb::direction::OUT) and request().wLength and (err == -ENOMEM))
+     {
+@@ -657,6 +716,32 @@ int udc_mac::event_callback(const udc_event& event)
+     return mac->process_event(event);
+ }
+ 
++void udc_mac::trace_control_state()
++{
++#ifdef CONFIG_UHK_USB_LEFT_RELAY
++    auto* api = static_cast<const udc_api*>(dev_->api);
++    api->lock(dev_);
++    auto* data = static_cast<udc_data*>(dev_->data);
++    auto* out = data->ep_lut[0];
++    auto* in = data->ep_lut[16];
++    uint32_t flags = control_retiring_ | (uint32_t(control_barrier_queued_) << 1) |
++        (uint32_t(udc_is_enabled(dev_)) << 2) |
++        (uint32_t(k_fifo_is_empty(&out->fifo)) << 3) |
++        (uint32_t(k_fifo_is_empty(&in->fifo)) << 4) |
++        (uint32_t(data->setup_pending) << 5) | (uint32_t(data->setup_valid) << 6) |
++        (uint32_t(out->stat.busy) << 7) | (uint32_t(in->stat.busy) << 8);
++    if (auto* buf = static_cast<net_buf*>(k_fifo_peek_head(&out->fifo)))
++    {
++        auto* info = udc_get_buf_info(buf);
++        flags |= uint32_t(info->setup) << 9;
++        flags |= uint32_t(info->data) << 10;
++        flags |= uint32_t(info->status) << 11;
++    }
++    atomic_set(&UhkUsbCtrlDiag[11], flags);
++    api->unlock(dev_);
++#endif
++}
++
+ bool udc_mac::synchronize_vbus(bool present)
+ {
+     if (!active() or (present == (power_state() != power::state::L3_OFF)))
+@@ -674,18 +759,23 @@ int udc_mac::process_event(const udc_event& event)
+     switch (event.type)
+     {
+     case UDC_EVT_RESET:
++        UHK_CONTROL_TRACE(10, 0, 0, 0);
+         diag::bus(diag::bus_event::RESET);
+         break;
+     case UDC_EVT_SUSPEND:
++        UHK_CONTROL_TRACE(13, 0, 0, 0);
+         diag::bus(diag::bus_event::SUSPEND);
+         break;
+     case UDC_EVT_RESUME:
++        UHK_CONTROL_TRACE(14, 0, 0, 0);
+         diag::bus(diag::bus_event::RESUME);
+         break;
+     case UDC_EVT_VBUS_READY:
++        UHK_CONTROL_TRACE(11, 0, 0, 0);
+         diag::bus(diag::bus_event::VBUS_ON);
+         break;
+     case UDC_EVT_VBUS_REMOVED:
++        UHK_CONTROL_TRACE(12, 0, 0, 0);
+         diag::bus(diag::bus_event::VBUS_OFF);
+         break;
+     case UDC_EVT_ERROR:
+@@ -697,6 +787,10 @@ int udc_mac::process_event(const udc_event& event)
+     if ((power_state() == power::state::L3_OFF) and (event.type != UDC_EVT_VBUS_READY)) [[unlikely]]
+     {
+         // flush late events after Vbus removal
++        if (event.type == UDC_EVT_EP_REQUEST)
++        {
++            UHK_CONTROL_COUNT(9);
++        }
+         return 0;
+     }
+     switch (event.type)
+@@ -706,6 +800,7 @@ int udc_mac::process_event(const udc_event& event)
+         {
+             if (control_retiring_ and endpoint::address(udc_get_buf_info(event.buf)->ep).number() == 0)
+             {
++                UHK_CONTROL_COUNT(8);
+                 // These are fixed buffers, not driver-owned allocations. Do
+                 // not rearm or interpret their retired control transaction.
+                 break;
+@@ -757,6 +852,7 @@ int udc_mac::process_event(const udc_event& event)
+ void udc_mac::ctrl_setup()
+ {
+     net_buf_reset(setup_buf_);
++    UHK_CONTROL_COUNT(10);
+     udc_buf_enqueue(dev_, setup_buf_);
+ }
+ 
+@@ -779,6 +875,10 @@ void udc_mac::ctrl_status(usb::direction dir)
+ 
+ void udc_mac::process_ctrl_ep(net_buf* buf, const udc_buf_info& info)
+ {
++#ifdef CONFIG_UHK_USB_LEFT_RELAY
++    UHK_CONTROL_TRACE(5, 0, 0, (uint32_t(info.ep) << 24) | (uhk_stage(info) << 16) | uint16_t(info.err));
++    if (info.err) { UHK_CONTROL_COUNT(3); }
++#endif
+     direction dir = endpoint::address(info.ep).direction();
+ 
+     if (info.err)
+@@ -803,6 +903,13 @@ void udc_mac::process_ctrl_ep(net_buf* buf, const udc_buf_info& info)
+         stall_flags_.clear(endpoint::address::control_in());
+ 
+         std::memcpy(&request(), buf->data, sizeof(request()));
++#ifdef CONFIG_UHK_USB_LEFT_RELAY
++        uint32_t header[2];
++        static_assert(sizeof(request()) == sizeof(header));
++        std::memcpy(header, &request(), sizeof(header));
++        UHK_CONTROL_COUNT(0);
++        UHK_CONTROL_TRACE(1, header[0], header[1], 0);
++#endif
+ #if CONFIG_C2USB_UDC_MAC_LOG_LEVEL >= LOG_LEVEL_DBG
+         // logged when DBG level is selected, but without the extra details of LOG_DBG()
+         LOG_INF("CTRL EP setup: %02x %02x %04x %u", request().bmRequestType, request().bRequest,
+@@ -810,6 +917,10 @@ void udc_mac::process_ctrl_ep(net_buf* buf, const udc_buf_info& info)
+ #endif
+ 
+         auto transfer = control_ep_setup();
++#ifdef CONFIG_UHK_USB_LEFT_RELAY
++        UHK_CONTROL_COUNT(1);
++        UHK_CONTROL_TRACE(2, header[0], header[1], uint32_t(transfer.size()) | (uint32_t(transfer.stalled()) << 16));
++#endif
+         if (transfer.stalled())
+         {
+             return ctrl_stall();
+diff --git a/c2usb/port/zephyr/udc_mac.hpp b/c2usb/port/zephyr/udc_mac.hpp
+index 94f71ed..b17b40e 100644
+--- a/c2usb/port/zephyr/udc_mac.hpp
++++ b/c2usb/port/zephyr/udc_mac.hpp
+@@ -33,6 +33,9 @@ class udc_mac : public df::mac
+     /// Returns true when normal attach/detach handling was run.
+     bool synchronize_vbus(bool present);
+ 
++    // Temporary experimental metadata snapshot; call on the USB worker.
++    void trace_control_state();
++
+     /// @brief Queues a task to be executed in the USB thread context.
+     /// @param task the callable to execute
+     /// @return OK if the task was queued, -ENOMSG if the queue is full
+-- 
+2.43.0
+

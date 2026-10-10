@@ -1,6 +1,7 @@
 /* UHK adapter: the portable relay runs only on the main event loop. */
 #include "usb_left_relay_uhk.h"
 #include "connections.h"
+#include "bt_conn.h"
 #include "device.h"
 #include "event_scheduler.h"
 #include "host_connection.h"
@@ -13,13 +14,15 @@
 #include <errno.h>
 #include <string.h>
 #include <zephyr/kernel.h>
+#include <zephyr/bluetooth/gatt.h>
 #include <zephyr/random/random.h>
 #include <zephyr/sys/atomic.h>
 
 _Static_assert(
     USB_LEFT_RELAY_MAX_PACKET + 4 <= MAX_LINK_PACKET_LENGTH, "relay exceeds Messenger MTU");
 static relay_t relay;
-static atomic_t ingressGeneration, controlRequest;
+static atomic_t uartIngressGeneration, bleIngressGeneration, controlRequest;
+static uint8_t observedConnection;
 static uint32_t observedGeneration;
 #if DEVICE_IS_UHK80_RIGHT
 static uint32_t feedbackRevision, observedLocalUsbGeneration;
@@ -33,34 +36,65 @@ static struct {
     bool ready, success;
 } completions[RelayKind_Count + 1];
 #define HALF_UART (DEVICE_IS_UHK80_RIGHT ? ConnectionId_UartLeft : ConnectionId_UartRight)
+#define HALF_BLE (DEVICE_IS_UHK80_RIGHT ? ConnectionId_NusServerLeft : ConnectionId_NusClientRight)
+#define HALF_PEER_ID (DEVICE_IS_UHK80_RIGHT ? PeerIdLeft : PeerIdRight)
 #define HALF_PEER (DEVICE_IS_UHK80_RIGHT ? DeviceId_Uhk80_Left : DeviceId_Uhk80_Right)
 
-/* The existing UART send path waits for the bridge's single TX slot. Keep
+uint8_t UsbLeft_LinkConnection(void)
+{
+    if (Connections_IsReady(HALF_UART)) {
+        return HALF_UART;
+    }
+    /* The existing NUS connection belongs to the paired other half. Wait for
+     * encryption and enough ATT payload space for every relay message. */
+    struct bt_conn *conn = Peers[HALF_PEER_ID].conn;
+    if (Connections_IsReady(HALF_BLE) && conn &&
+        bt_conn_get_security(conn) >= BT_SECURITY_L2 &&
+        bt_gatt_get_mtu(conn) >= USB_LEFT_RELAY_MAX_PACKET + 4 + 3) {
+        return HALF_BLE;
+    }
+    return ConnectionId_Invalid;
+}
+
+/* Existing UART/NUS send paths wait for transport slots. Keep
  * relay traffic in a bounded worker queue instead of blocking main-loop scans. */
 typedef struct {
     uint32_t generation;
+    uint8_t connection;
     uint8_t length;
     uint8_t data[USB_LEFT_RELAY_MAX_PACKET];
 } relay_tx_t;
 K_MSGQ_DEFINE(relayTxQueue, sizeof(relay_tx_t), 4, 4);
+K_THREAD_STACK_DEFINE(relayTxStack, 2048);
+static struct k_work_q relayTxWorkQueue;
 static void transmitWorker(struct k_work *work)
 {
     (void)work;
     relay_tx_t packet;
     while (!k_msgq_get(&relayTxQueue, &packet, K_NO_WAIT)) {
-        if (!Connections_IsReady(HALF_UART) ||
-            packet.generation != UsbLeft_IngressGeneration(HALF_UART)) {
-            continue;
-        }
         message_t msg = {.data = packet.data,
             .len = packet.length,
             .messageId = {MessageId_UsbLeftRelay},
             .idsUsed = 1,
             .src = DEVICE_ID,
             .dst = HALF_PEER,
-            .connectionId = HALF_UART};
-        (void)Messenger_SendMessage(
-            &msg); // The protocol handles loss/failed sends with immutable retries.
+            .connectionId = packet.connection};
+        uint32_t started = Timer_GetCurrentTime();
+        for (;;) {
+            if (packet.connection != UsbLeft_LinkConnection() ||
+                packet.generation != UsbLeft_IngressGeneration(packet.connection)) {
+                break;
+            }
+            int result = Messenger_SendMessage(&msg);
+            if ((result != -EAGAIN && result != -EBUSY && result != -EALREADY && result != -ENOMEM) ||
+                (uint32_t)(Timer_GetCurrentTime() - started) >= RELAY_REPORT_RETRY_MS) {
+                break;
+            }
+            /* Keep ownership of these bytes while the shared NUS slot is busy.
+             * Yield only this dedicated worker; never stall Bluetooth callbacks
+             * or retarget the packet if the preferred connection changes. */
+            k_sleep(K_MSEC(2));
+        } // Longer loss still uses the protocol's immutable retries/deadline.
     }
     EventVector_WakeMain();
 }
@@ -68,15 +102,21 @@ K_WORK_DEFINE(relayTxWork, transmitWorker);
 static bool sendPacket(void *user, const uint8_t *data, size_t len)
 {
     (void)user;
-    if (!Connections_IsReady(HALF_UART) || len > USB_LEFT_RELAY_MAX_PACKET) {
+    uint8_t connection = UsbLeft_LinkConnection();
+    if (connection == ConnectionId_Invalid || connection != observedConnection ||
+        observedGeneration != UsbLeft_IngressGeneration(connection) ||
+        len > USB_LEFT_RELAY_MAX_PACKET) {
         return false;
     }
-    relay_tx_t packet = {.generation = UsbLeft_IngressGeneration(HALF_UART), .length = len};
+    relay_tx_t packet = {
+        .generation = observedGeneration, .connection = connection, .length = len};
     memcpy(packet.data, data, len);
     if (k_msgq_put(&relayTxQueue, &packet, K_NO_WAIT)) {
         return false;
     }
-    (void)k_work_submit(&relayTxWork);
+    /* Bluetooth completion work uses the system queue. A transport slot wait
+     * must never prevent that queue from releasing the slot we need. */
+    (void)k_work_submit_to_queue(&relayTxWorkQueue, &relayTxWork);
     return true;
 }
 static int submit(void *user, uint8_t kind, const uint8_t *data, uint64_t token, uint32_t seq)
@@ -122,18 +162,22 @@ bool UsbLeft_Initialized(void)
 }
 void UsbLeft_Init(void)
 {
+    k_work_queue_start(&relayTxWorkQueue, relayTxStack, K_THREAD_STACK_SIZEOF(relayTxStack),
+        K_PRIO_PREEMPT(8), NULL);
+    k_thread_name_set(&relayTxWorkQueue.thread, "usbLeftRelayTx");
     relay_platform_t platform = {sendPacket, submit, quiesce, wake, nonce, delivered, changed};
     Relay_Init(&relay, DEVICE_IS_UHK80_RIGHT, &platform, NULL);
     initialized = true;
 }
 uint32_t UsbLeft_IngressGeneration(uint8_t connection)
 {
-    return connection == HALF_UART ? atomic_get(&ingressGeneration) : 0;
+    return connection == HALF_UART ? atomic_get(&uartIngressGeneration)
+         : connection == HALF_BLE ? atomic_get(&bleIngressGeneration) : 0;
 }
 void UsbLeft_LinkChanged(uint8_t connection)
 {
-    if (connection == HALF_UART) {
-        atomic_inc(&ingressGeneration);
+    if (connection == HALF_UART || connection == HALF_BLE) {
+        atomic_inc(connection == HALF_UART ? &uartIngressGeneration : &bleIngressGeneration);
         EventVector_WakeMain();
     }
 }
@@ -153,9 +197,10 @@ void UsbLeft_LocalComplete(uint8_t kind, uint64_t token, uint32_t sequence, bool
 void UsbLeft_Receive(
     uint8_t source, uint8_t connection, uint32_t generation, const uint8_t *packet, size_t len)
 {
-    if (!initialized || source != HALF_PEER || connection != HALF_UART ||
+    if (!initialized || source != HALF_PEER || connection == ConnectionId_Invalid ||
+        connection != UsbLeft_LinkConnection() || connection != observedConnection ||
         generation != UsbLeft_IngressGeneration(connection) || generation != observedGeneration ||
-        !Connections_IsReady(HALF_UART)) {
+        len > USB_LEFT_RELAY_MAX_PACKET) {
         return;
     }
     Relay_Receive(&relay, packet, len);
@@ -172,12 +217,14 @@ void UsbLeft_Process(void)
     }
     Hid_LocalUsbService();
     Hid_LocalUsbDrainCompletions();
-    uint32_t generation = UsbLeft_IngressGeneration(HALF_UART);
-    if (observedGeneration != generation) {
+    uint8_t connection = UsbLeft_LinkConnection();
+    uint32_t generation = UsbLeft_IngressGeneration(connection);
+    if (observedConnection != connection || observedGeneration != generation) {
         Relay_SetLink(&relay, false);
+        observedConnection = connection;
         observedGeneration = generation;
     }
-    Relay_SetLink(&relay, Connections_IsReady(HALF_UART));
+    Relay_SetLink(&relay, connection != ConnectionId_Invalid);
 #if DEVICE_IS_UHK80_LEFT
     relay_usb_state_t state = {0};
     uint32_t usbGeneration;
@@ -215,7 +262,7 @@ void UsbLeft_Process(void)
     #endif
         if (control == 4) {
             Relay_SetLink(&relay, false);
-            Relay_SetLink(&relay, Connections_IsReady(HALF_UART));
+            Relay_SetLink(&relay, UsbLeft_LinkConnection() != ConnectionId_Invalid);
         }
         if (control == 2 || control == 3) {
             Connections_HandleSwitchover(
@@ -223,6 +270,9 @@ void UsbLeft_Process(void)
         }
     }
     HostRoute_Process();
+    // A committed host or inter-half transport can change here without another
+    // switchover callback. The per-peer cache makes unchanged profiles a no-op.
+    BtConn_UpdateConnectionLatencies();
     if (feedbackRevision != relay.usb.revision) {
         feedbackRevision = relay.usb.revision;
         if (Connections_Type(CurrentHostConnectionId) == ConnectionType_UsbHidLeft) {

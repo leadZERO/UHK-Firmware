@@ -75,11 +75,167 @@ selected the ready left USB host. These checks establish those scenarios;
 direct Mac USB-C reconnect behavior, held-key switching and the remaining
 acceptance matrix still need coverage.
 
+Local Bluetooth fallback testing updated both halves, detached the bridge, and
+selected left USB with both host ports on Windows. Initial testing exposed NUS
+send contention and then a typing backlog. The relay now transmits from a
+dedicated worker, uses strict/nonblocking send-slot ownership and persistent
+client payload storage, and retries transient contention for at most 32 ms.
+An active wireless left host also requests a zero-skip Bluetooth profile. All
+regressions and both signed builds pass. Windows Raw Input confirmed matched
+press/release events from the left USB interface. After the final uploads, the
+user confirmed sustained cable-free typing, working key release and removal of
+the backlog. The final route was active and unblocked with no current fault
+reason, but the counters recorded one additional recovered fault/activation
+during the latest test interval. Its trigger was not retained. Physical bridge handover, separate-computer Mac
+testing and the remaining acceptance matrix still require coverage.
+
+A subsequent USB reconnect with the bridge attached left Windows seeing only
+right USB, while the bridge relay itself remained negotiated. Left reset with
+that wiring did not enumerate; detaching the bridge and resetting left restored
+its USB interface. A definite startup defect classified Nordic regulator READY
+as disconnected. Only DISCONNECTED now maps to USB off; CONNECTED and READY
+permit initial attachment. The initializer plus actual SDK start/attach regression
+fails before that correction and passes after it. Both corrected images were
+flashed and both USB interfaces returned in the bridge-detached setup. The
+bridge-attached startup was subsequently confirmed; cable-only reconnect still
+failed in the sequence below.
+
+The corrected startup was subsequently confirmed with the bridge attached, but
+the original warm sequence (remove bridge, unplug left USB, restore bridge,
+restore left USB) still failed. Relayed charger state indicated USB power present
+while Windows did not enumerate left USB. The USB worker now reconciles the
+observed Nordic VBUS level with a stale MAC off/on state through the third c2usb
+patch's normal power-event handling. Checks run at most every 100 ms and only
+after the preceding local USB generation's cancellation/completion barrier
+finishes. Inactive devices remain closed. That correction passed the
+SDK/event/barrier regression but still failed the exact warm hardware sequence.
+The Nordic controller patch also handles READY preceding the stack's deferred
+enable: an inactive peripheral is not started in the power callback, while
+enable starts an already-ready regulator without requiring another edge. The
+actual driver ordering regression fails before the patch and passes afterward.
+
+Warm reconnect still fails in the original physical sequence. Earlier diagnostics
+misinterpreted USBPULLUP=0 while LOWPOWER=1 as a disconnected pull-up. The
+[nRF52840 product specification, section 6.35.12](https://devzone.nordicsemi.com/cfs-file/__key/communityserver-discussions-components-files/4/nRF52840_5F00_PS_5F00_v1.8.pdf)
+states that USBPULLUP is inaccessible during low power. The resulting periodic
+controller restart logic has been removed, as have the speculative suspend-event
+changes. Power reconciliation uses only the observed VBUS level; an unchanged,
+suspended controller is not repeatedly detached.
+
+The fourth Nordic SDK patch restores normal register access within a fresh
+peripheral-enable sequence, before the pull-up is attached. It leaves a live
+suspended connection alone. The actual peripheral-enable regression checks
+retained LOWPOWER; the preceding driver without this correction fails it.
+Temporary fifth-patch diagnostics count reset/setup/resume and power events,
+with HFXO state reported through the bridge. The pull-up reading is marked 255
+when inaccessible. Builds and isolated regressions do not establish cable
+reconnect correctness; hardware acceptance remains unresolved.
+
+The r8 candidate addresses a separately reproduced control-endpoint lifecycle
+defect. The pinned Zephyr API makes c2usb own fixed EP0 SETUP, DATA and STATUS
+buffers. Controller disable leaves the control queues intact, and reattach
+previously treated any nonempty EP0 OUT queue as a SETUP buffer being available.
+A retained STATUS with the SETUP buffer no longer queued makes the next request
+remain cached by UDC; bus reset previously drained only EP0 IN and has the same
+weakness when bridge power maintains VBUS. The fourth c2usb patch retires both
+control queues and drains their completion events before reusing fixed buffers.
+It rearms SETUP after powered reset without restarting the controller, preserving
+a new request cached during retirement. Posting the retirement barrier uses a
+nonblocking queue operation: if completions fill the event queue, the USB worker
+continues consuming and retries at the queue tail after each event. Fixed buffers
+remain retired until the successfully queued barrier is consumed. This avoids
+blocking the worker while posting to its own queue; the full-queue regression
+rejects the preceding r7 implementation. The sixth Zephyr patch clears cached
+SETUP belonging to a disabled attachment while holding the UDC mutex. The
+preceding SDK fails the retained-STATUS, powered-reset and obsolete-cache
+regressions; the candidate passes all of them and both signed builds. This is
+a tested software defect and a candidate explanation for the reconnect failure;
+the original hardware sequence must still pass before attributing that failure
+to it.
+
+The original warm sequence still failed after r8 was flashed to both halves,
+with both controller workers active and the left USB controller powered. r9
+adds temporary bounded driver and control-stack traces of SETUP headers,
+reply lengths, enqueue/completion/stall stages and retirement/cache flags.
+Only the eight-byte USB control header and metadata are recorded; report and
+control-transfer payloads are excluded. A worker snapshot reads queue/cache
+state under the UDC mutex. After enumeration stops, the left main loop forwards
+small batches through the bridge. These diagnostics change no reconnect policy.
+They are intended to identify the transaction where enumeration stops before
+choosing another correction.
+
+## Investigation paused on 2026-10-09
+
+The feature branch is saved as an experimental checkpoint. Wireless left-host
+typing from both halves, key release, and removal of the typing backlog were
+confirmed on Windows. The full acceptance matrix remains incomplete.
+
+The outstanding failure is specific to this tested sequence with right USB
+connected to Windows throughout: detach the bridge, unplug left host USB,
+reattach the bridge, then reconnect left host USB directly using USB-C to USB-C.
+Windows does not enumerate the left interface; selecting it shows rolling dots.
+Cycling the bridge again restores enumeration. Changing only the left cable/path
+to USB-C to USB-A also restores enumeration without resetting either half or
+cycling the bridge. Reverting to direct USB-C after that can retain the old
+configuration while suspended, displaying `(asleep)` despite no Windows device.
+
+The corrected trace places the final failing attachment after the earlier
+successful control requests: VBUS is present and SETUP is armed, followed by
+suspend and a brief resume, with no new bus reset or SETUP request. The worker
+and clock remain active. The USB-A comparison receives a reset and enumerates
+without another controller enable/start. This narrows the failure to direct
+USB-C attachment, but does not prove a cable, CC, power-isolation or PHY defect.
+No connector-level voltage/CC measurement or public board schematic was available.
+
+The endpoint-retirement and READY-ordering corrections have regression coverage,
+but did not fix that physical sequence. The removed periodic restart and
+speculative suspend-event work must not be reinstated based on USBPULLUP reads
+in low power: those registers are inaccessible there. Current diagnostic patches
+record control-header metadata and valid awake START/RESUME register snapshots;
+they do not change recovery policy or capture keyboard-report payloads.
+
+All host regression scripts listed below passed at the checkpoint. Both halves
+were previously built and signature-verified; the last additional diagnostic
+build was left-only. Before restoration, hardware ran left r10 (SHA256
+`2ee8882f09746b20e4375a0441deb4556d0f27e80db0a8fac50c4cedf57e55b0`)
+and right r8 (`c33f18fd9fa117d6bb20aee8bd34486a29db4e0a8f36b29e207234585e75f698`).
+Diagnostic labels and embedded source tags are not substitutes for those hashes.
+
+Local captures, signed images, configuration backups and helper tools remain in
+the ignored `build/local-uhk80/` directory. Start with
+`usb-type-c-power-r10-investigation.md`, `usb-left-enumeration-r9b-live.log`,
+`usb-a-path-restored-r9b.log` and `wireless-fallback-validation.md`. The paused
+investigation should resume from the direct USB-C attachment evidence, rather
+than treating bridge power as proof that a computer is attached.
+
+The requested rollback uses the official
+[18.0.4 release](https://github.com/UltimateHackingKeyboard/firmware/releases/tag/v18.0.4),
+whose archive SHA256 is
+`74814e2bb6ed58b09dff8a020ee3c2f07ec0d6e115cf0c80cee7ac729f4dfde2`.
+Only application firmware is restored; the existing bootloaders and saved user
+configuration are retained. Restoration results are recorded locally alongside
+the release metadata and upload logs.
+
 ## Behavior and limits
 
-- Connect the inter-half bridge cable, Computer A to right USB-C and Computer B
-  to left USB-C. Both halves must run these experimental images. The relay uses
-  **UART only**; loss of the bridge does not send relay traffic over BLE.
+- Connect Computer A to right USB-C and Computer B to left USB-C. Both halves
+  must run these experimental images and remain powered. The relay prefers the
+  inter-half UART bridge. Without that bridge it uses the halves' existing paired
+  Bluetooth NUS connection; no additional computer Bluetooth pairing is needed.
+  Radio disablement or missing inter-half pairing prevents wireless fallback.
+  Allow time for the existing Bluetooth manager to reconnect after bridge loss.
+- Wireless selection requires a ready, encrypted inter-half connection with an
+  ATT MTU of at least 71 bytes. Messages use an explicit peer connection, and
+  left-side notifications target the paired right half rather than broadcasting.
+  Switching transport or reconnecting the selected link invalidates queued traffic
+  and renegotiates a fresh session. Left USB resumes only after transfer drain
+  and neutral reports complete. An inactive BLE link changing while the bridge
+  remains ready does not invalidate the wired relay.
+- An awake, selected left USB host using Bluetooth requests a 7.5 ms connection
+  interval with zero peripheral event skips. Other host/inter-half profiles
+  retain their existing settings. Profile changes are cached per peer, and the
+  relay loop refreshes selection after an asynchronous host commit or handover.
+  This avoids the ordinary NUS profile's four-event skips backing up typing.
 - The optional development slot is `USB_Left_Dev`, allocated only in an empty
   serialized host slot. It never overwrites a paired/reserved slot. An existing
   unique USB Left slot is reused. Duplicate slots or a full table prevent
@@ -104,7 +260,19 @@ acceptance matrix still need coverage.
 - Local USB submissions and cancellation run on the c2usb worker. Queued
   reservations remain owned through submission. Lifecycle fences cancel old
   transfers and drain their callbacks before allowing buffer reuse. Relay
-  transmission uses a bounded four-packet UART worker queue.
+  transmission uses a bounded four-packet worker queue for either inter-half
+  transport. Each queued packet owns its connection and ingress generation;
+  stale packets are discarded rather than redirected to another link.
+  A dedicated 2 KiB relay worker stack keeps send-side waits outside Bluetooth's
+  system completion queue. Relay NUS sends return busy immediately rather than
+  waiting for a slot. Other NUS callers retain a bounded 256 ms wait, but a failed
+  acquisition returns an error without submitting or releasing an unowned slot.
+  The NUS client's payload buffer remains owned until asynchronous completion.
+  The dedicated relay worker retries transient send-slot/allocation failures
+  for at most 32 ms, yielding for 2 ms between attempts and rechecking transport
+  identity before each one. Further loss follows the protocol's normal retries
+  and deadline. This prevents state-sync contention from discarding every
+  attempt at the same transport phase.
 
 Timing constants are provisional: report retry 32 ms, report deadline 128 ms,
 heartbeat 200 ms, left lease 700 ms, state age limit 1,000 ms, and a 100 ms
@@ -252,6 +420,7 @@ uhk log usbSink 1
 ```
 
 Status includes negotiation, configuration, activity, quiescence, pending reports,
+`transport=bridge|bluetooth|none`, explicit connection ID and link generation,
 USB generation, rejected/duplicate/retry/fault counters, numeric fault reason,
 current/requested host and input blocking. `provisionResult` is the connection
 ID on success, `-ENOSPC` for a full table or `-EEXIST` for duplicate left slots.
@@ -276,6 +445,12 @@ bash tests/usb_left_relay/run.sh
 bash tests/usb_left_relay/run_c2usb_completion.sh
 bash tests/usb_left_relay/run_relay_poll.sh
 bash tests/usb_left_relay/run_normal_keyboard_completion.sh
+bash tests/usb_left_relay/run_wireless.sh
+bash tests/usb_left_relay/run_nus_contention.sh
+bash tests/usb_left_relay/run_wireless_latency.sh
+bash tests/usb_left_relay/run_usb_power_startup.sh
+bash tests/usb_left_relay/run_nrf_usb_ready.sh
+bash tests/usb_left_relay/run_usb_control_retirement.sh
 ```
 
 See [test coverage and boundaries](../../tests/usb_left_relay/README.md).
@@ -304,6 +479,12 @@ Hardware acceptance still needs:
 4. Disconnect/reconnect either USB cable or bridge during transfers and switches;
    reboot either half; verify no replay, duplicate relative movement or false
    completion. A blocked drain must remain visibly blocked.
+   With the bridge detached, verify `transport=bluetooth`, typing from both
+   halves and key release through left USB. Restore the bridge and verify
+   `transport=bridge` with a fresh activation; repeat while holding a key and
+   while an ACK is pending. Disconnect the wireless peer and confirm left-host
+   all-up cleanup, then reconnect without replaying held input. Measure wireless
+   latency and check mouse/controls/LED feedback alongside keyboard reports.
 5. Test sleep/resume and permitted/denied remote wakeup, including a suspended
    old host that resumes after switching away.
 6. Stress UART loss/retries, endpoint cancellation, USB reconfiguration and

@@ -10,6 +10,7 @@ void UsbLeft_Process(void);
 void UsbLeft_Receive(
     uint8_t source, uint8_t connection, uint32_t generation, const uint8_t *packet, size_t len);
 uint32_t UsbLeft_IngressGeneration(uint8_t connection);
+uint8_t UsbLeft_LinkConnection(void);
 void UsbLeft_LinkChanged(uint8_t connection);
 bool UsbLeft_Connected(void);
 bool UsbLeft_Awake(void);

@@ -2,6 +2,7 @@
 #include "usb_left_relay_uhk.h"
 #endif
 #include "messenger.h"
+#include <errno.h>
 #include "test_suite/test_hooks.h"
 #include "bt_conn.h"
 #include "connections.h"
@@ -498,6 +499,13 @@ int Messenger_SendMessage(message_t* message) {
             break;
         case ConnectionId_NusClientRight:
 #if defined(CONFIG_BT_NUS) && defined(CONFIG_BT_PERIPHERAL)
+#if defined(CONFIG_UHK_USB_LEFT_RELAY) && DEVICE_IS_UHK80_LEFT
+            if (message->idsUsed && message->messageId[0] == MessageId_UsbLeftRelay) {
+                struct bt_conn *peer = Peers[PeerIdRight].conn;
+                err = peer ? NusServer_SendMessageTo(message, peer) : -ENOTCONN;
+                break;
+            }
+#endif
             err = NusServer_SendMessage(message);
 #endif
             break;

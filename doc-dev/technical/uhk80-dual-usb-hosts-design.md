@@ -1,4 +1,4 @@
-# Technical design: UHK80 switching between two wired USB hosts
+# Technical design: UHK80 switching between two USB hosts
 
 **Status:** Experimental firmware implementation complete; hardware validation pending.
 
@@ -16,7 +16,11 @@ The sections below record the implementation design. The implementation uses
 `usb_left_relay_uhk.h` for the coordinator/platform API and a dedicated
 `right/src/hid/usb_left_adapter.cpp` for transfer ownership and local encoding.
 USB submission/cancellation runs on the c2usb worker; lifecycle fences drain
-callbacks before reusing storage. UART transmission uses a bounded worker queue.
+callbacks before reusing storage. Inter-half relay transmission uses a bounded
+worker queue with explicit connection and generation ownership. The relay has
+a dedicated 2 KiB transmit worker stack, separate from Bluetooth system-queue
+completions. Relay NUS send-slot acquisition is nonblocking; client payload
+storage survives through the asynchronous GATT completion.
 Queued USB reservations remain owned until replaced by endpoint transfers.
 
 The report retry/deadline are provisionally 32/128 ms. A transition with no
@@ -34,11 +38,12 @@ separately.
    controller. Forward complete processed reports to the left USB endpoint.
 2. Keep both USB devices enumerated. Selection gates input, not enumeration or
    the vendor-command interface.
-3. Implement the new relay over the **wired UART bridge only** in version 1.
-   Existing inter-half BLE key/state traffic continues unchanged. Removing the
-   bridge makes USB Left unavailable for relay input; it does not redirect input
-   to USB Right. Relay over inter-half BLE can be added later using the same
-   application protocol after testing its ordering and timing.
+3. Prefer the wired UART bridge and fall back to the existing paired inter-half
+   Bluetooth NUS connection when the bridge is unavailable. Require encryption
+   and an ATT MTU of at least 71 bytes. A change of transport or selected-link
+   generation closes the old session and negotiates a fresh one, including USB
+   drain and neutral delivery. Never redirect queued old-route reports to the
+   replacement link. Existing inter-half key/state traffic retains its routing.
 4. Introduce a versioned relay message family with fresh session tokens,
    per-report sequence numbers, bounded buffering, and USB completion results.
 5. Perform host changes involving USB Left through an asynchronous transition
@@ -49,10 +54,11 @@ separately.
 7. Preserve serialized host types, USB VID/PIDs, existing descriptors, and the
    bootloader. Do not change the PC-facing configuration format for the relay.
 
-The UART-only decision narrows the PRD's optional alternate-route behavior: the
-first release demonstrates the fully wired setup and does not claim a new BLE
-relay fallback. It preserves existing BLE/dongle operation and ordinary left-to-
-right key scanning over their existing routes.
+The initial wired implementation was extended with Bluetooth fallback after
+local USB completion and key-release fixes. Host-side USB descriptors and the
+application relay protocol are unchanged. Both halves require the updated
+firmware. Automatic inter-half reconnection follows the existing Bluetooth
+manager; radio operation and handover timing still require hardware validation.
 
 ## 2. Current code and architecture
 
@@ -81,7 +87,7 @@ flowchart LR
   U --> S[Report sender and route coordinator]
   S -->|USB Right| A[Computer A]
   S -->|USB Left| T[Relay sender]
-  T <-->|UART: reports, completion, host state| L[Left relay receiver]
+  T <-->|UART preferred, paired BLE fallback| L[Left relay receiver]
   L --> E[Left local USB encoder and endpoint]
   E --> B[Computer B]
 ```
@@ -139,13 +145,13 @@ events into one snapshot, but invalidate the active relay immediately on teardow
 
 Update `usb_state.c` to identify the local port: right publishes USB Right; left
 publishes local USB Left and notifies the relay. The right derives the configured
-left host's state from the remote snapshot and verified UART/capability state.
+left host's state from the remote snapshot and verified inter-half link/capability state.
 
 | Left conditions known to right | Connection state | Product state |
 | --- | --- | --- |
-| UART/capability unavailable, stale peer, or USB not configured | Disconnected | Unavailable |
-| Compatible UART peer and configured left USB, suspended | Connected | Sleeping |
-| Compatible UART peer and configured left USB, awake | Ready | Ready for selection |
+| Inter-half link/capability unavailable, stale peer, or USB not configured | Disconnected | Unavailable |
+| Compatible inter-half peer and configured left USB, suspended | Connected | Sleeping |
+| Compatible inter-half peer and configured left USB, awake | Ready | Ready for selection |
 
 Report activation is separate from connection availability: the left can be
 Ready while inactive, but reports require a completed `BEGIN` transaction.
@@ -183,7 +189,7 @@ fresh relay session before accepting new input. Do not replay the waking input
 or held inputs accumulated during suspension. Existing system-control HID wake
 actions remain distinct from USB remote-wakeup requests.
 
-Keep the UART link serviced while a selected awake left host requires it. Deep
+Keep the selected inter-half link serviced while an awake left host requires it. Deep
 sleep entry first invalidates the relay and requests neutral state; do not sleep
 the link underneath an active lease. On wake, perform handshake/session setup
 again. The left also clears on lease expiry if the right disappears unexpectedly.
@@ -203,13 +209,15 @@ format, because those reports lack session and completion identity.
 
 Add a proposed `Messenger_SendVia()` for a single message ID on an explicit
 connection. It wraps the existing `Messenger_SendMessage()`; use UART Left on
-the right and UART Right on the left. Never allow this family to choose BLE or a
-host/dongle connection implicitly.
+the right and UART Right on the left when ready. Otherwise explicitly select
+NUS Server Left on the right and NUS Client Right on the left. Wireless left-side
+notifications target the paired right connection. Never select a host/dongle
+connection or implicitly retarget a queued message.
 
 Preserve the ingress connection ID in the Messenger queue record and propagate
 it to the new dispatcher. Currently the queue preserves the source device but
 not its connection. Validate direction, source/destination device, and the paired
-UART connection before decoding. Verify the outer length before reading IDs.
+selected inter-half connection before decoding. Verify the outer length before reading IDs.
 The old message paths keep their existing dispatch behavior.
 
 Every relay payload begins with `version:u8, opcode:u8`. Integers are explicitly
@@ -250,7 +258,7 @@ An END for an unseen BEGIN fences its selection generation before acknowledging
 closure, so a delayed BEGIN cannot reopen the closed transaction. END validates
 the peer boot/challenge but permits closing across a changed USB generation.
 
-The right starts negotiation when UART becomes ready. The new left remains
+The right starts negotiation when the selected inter-half link becomes ready. The new left remains
 passive with an old right. An old left receives an unknown message ID and cannot
 enable the feature; keep probes bounded and diagnose incompatibility once per
 link attempt. Stop probing after three unanswered attempts until a fresh link
@@ -299,7 +307,7 @@ PRD target leaves 300 ms after lease expiry for cleanup; measure both phases.
 STATE is sent on changes and periodically while the peer is negotiated so loss
 of a feedback packet does not leave the right with indefinitely stale state.
 
-Rotate the challenge on each new UART link generation and clear cached handshake
+Rotate the challenge on each selected transport/link generation and clear cached handshake
 transactions for the old link. Retain that ingress generation as well as the
 connection ID in Messenger queue metadata; reject packets queued before a
 disconnect even if the same connection ID is subsequently ready again.
@@ -318,7 +326,8 @@ apply backpressure rather than creating an unbounded relay FIFO.
 not release `UsbSemaphore`. The right releases that kind exactly once when a
 matching DONE(success) is processed for the active token/sequence and the
 original pending baseline. Record scheduler completion at that point, with a
-relay-specific interval estimate rather than a BLE connection estimate.
+relay-specific interval estimate: wired framing/USB/ACK timing for the bridge,
+and two inter-half BLE intervals plus USB polling for the wireless path.
 
 The left validates token and next expected sequence, copies the canonical/side
 report into its fixed slot, and submits via an explicit local USB encoder.
@@ -526,7 +535,7 @@ cannot advance sequence or report baselines.
 | Lost REPORT or DONE | Retry the same sequence; deduplication prevents duplicate USB input. |
 | Lost BEGIN/END reply | Retry the same transaction; return cached result without resetting an active session or repeating completed neutrals. |
 | USB reset or SET_PROTOCOL session replacement | Invalidate current generation/token, quiesce old transfers, publish new state, and begin again before fresh input. |
-| Bridge removed or UART peer changes | Mark relay unavailable immediately on the link event; reject queued ingress from old route state. Left lease remains the independent cleanup fallback. |
+| Bridge/BLE route changes or selected peer reconnects | Close the relay, reject queued traffic from the old connection/generation, and renegotiate over the preferred available inter-half transport. Left lease remains the independent cleanup fallback. |
 | Right reboot/main-loop loss | Fresh boot identity requires new negotiation; absent heartbeats expire the old left lease. A system-wide left failure still depends on the platform's existing reset/recovery mechanisms. |
 | Left reboot | Old token is absent and rejected. HELLO/USB generation changes invalidate pending right state; no report replay. |
 | USB error/empty callback or unknown mouse outcome | No success ACK; fault, quiesce, neutralize, and discard stale input. |
@@ -632,7 +641,9 @@ the CLI. Firmware updates use the existing updater and each half's
    saturation, and macro barriers before involving Agent configuration changes.
 5. Run the PRD's 1,000-switch and 60-minute soak, latency/resource measurements,
    Windows/Linux coverage, and macOS compatibility pass. Confirm active relay
-   traffic uses UART and works without radio dependence in the fully wired test.
+   traffic prefers UART and works without radio dependence in the fully wired
+   test. With the bridge absent, verify paired BLE transport, key release,
+   idle leases and fresh negotiation when the bridge returns.
 
 Offline GDB, matching ELF crash lookup, existing USB logs, `uhk uartStats`, and
 new relay counters support the Windows/WSL workflow. No physical flashing or
@@ -668,7 +679,7 @@ equate unit-test success with successful physical integration.
 | --- | --- |
 | `device/src/usb_left_relay*`, `device/src/host_route*` (new) | Codec, handshake, relay state machines, transition coordinator, diagnostics. |
 | `device/src/CMakeLists.txt`, `device/Kconfig`, experimental overlays/presets | Compile only appropriate UHK80 code and enable development provisioning separately. |
-| `device/src/messenger.c/.h`, `device/src/messenger_queue.c/.h` | New message family, explicit UART send, bounded ingress validation, retain source connection metadata. |
+| `device/src/messenger.c/.h`, `device/src/messenger_queue.c/.h` | New message family, explicit inter-half transport, bounded ingress validation, retain source connection metadata. |
 | `right/src/hid/transport.cpp/.h`, `keyboard_app.cpp`, `mouse_app.cpp`, `controls_app.cpp`, `transport_usb.cpp` | Explicit relay/local sinks, canonical encoding separation, session/lifecycle and completion tickets, generation-aware USB reset/cancel integration. |
 | `patches/c2usb` if needed | Minimal endpoint quiescence/cancellation exposure; retain patches across west update and test their callback contract. |
 | `right/src/usb_report_sender.c`, `usb_semaphore.c/.h`, `usb_scheduler.c` | Relay-owned timeout/retry and completion, guarded baseline advancement, relay interval estimate, no USB Left Bluetooth reconnect fallback. |

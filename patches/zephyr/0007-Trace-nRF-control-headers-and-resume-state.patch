@@ -1,0 +1,112 @@
+From 23f8209cde75ce6682123f6d11fb78ee545e9c13 Mon Sep 17 00:00:00 2001
+From: UHK SDK Setup <setup@localhost>
+Date: Fri, 9 Oct 2026 20:04:36 -0600
+Subject: [PATCH] Trace nRF control headers and resume state
+
+---
+ drivers/usb/udc/udc_nrf.c | 47 +++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 47 insertions(+)
+
+diff --git a/drivers/usb/udc/udc_nrf.c b/drivers/usb/udc/udc_nrf.c
+index f46657fe9b8..99e4f207024 100644
+--- a/drivers/usb/udc/udc_nrf.c
++++ b/drivers/usb/udc/udc_nrf.c
+@@ -53,6 +53,37 @@ static K_EVENT_DEFINE(drv_evt);
+ #ifdef CONFIG_UHK_USB_LEFT_RELAY
+ /* Temporary USB bus-order diagnostics for the experimental left relay. */
+ atomic_t UhkNrfUsbDiag[13];
++atomic_t UhkNrfSetupTraceCount;
++atomic_t UhkNrfSetupTrace[32][6];
++static void uhk_nrf_trace(uint32_t event, uint32_t lo, uint32_t hi, uint32_t detail)
++{
++	uint32_t seq = (uint32_t)atomic_inc(&UhkNrfSetupTraceCount) + 1;
++	atomic_t *record = UhkNrfSetupTrace[(seq - 1) % 32];
++	atomic_set(&record[0], 0);
++	atomic_set(&record[1], k_uptime_get_32());
++	atomic_set(&record[2], event);
++	atomic_set(&record[3], lo);
++	atomic_set(&record[4], hi);
++	atomic_set(&record[5], detail);
++	atomic_set(&record[0], seq);
++}
++static void uhk_nrf_trace_registers(uint32_t event)
++{
++	uint32_t enabled = NRF_USBD->ENABLE;
++	uint32_t low = NRF_USBD->LOWPOWER;
++	uint32_t pullup = 255, address = 255, frame = UINT32_MAX, mask = UINT32_MAX;
++	/* These registers are inaccessible while disabled or in low power.
++	 * Observe the awake transition; never wake USB merely to read them.
++	 */
++	if (enabled && !low) {
++		pullup = NRF_USBD->USBPULLUP;
++		address = NRF_USBD->USBADDR;
++		frame = NRF_USBD->FRAMECNTR;
++		mask = NRF_USBD->INTEN;
++	}
++	uint32_t state = enabled | (low << 1) | (pullup << 8) | (address << 16);
++	uhk_nrf_trace(event, state, frame, mask);
++}
+ #endif
+ 
+ 
+@@ -405,6 +436,7 @@ static void ev_usbreset_handler(void)
+ {
+ #ifdef CONFIG_UHK_USB_LEFT_RELAY
+ 	atomic_inc(&UhkNrfUsbDiag[8]);
++	uhk_nrf_trace(2, 0, 0, NRF_USBD->LOWPOWER);
+ #endif
+ 	m_bus_suspend = false;
+ 
+@@ -497,6 +529,15 @@ static void ev_setup_handler(void)
+ {
+ #ifdef CONFIG_UHK_USB_LEFT_RELAY
+ 	atomic_inc(&UhkNrfUsbDiag[9]);
++	uint32_t low = NRF_USBD->LOWPOWER;
++	uint32_t lo = UINT32_MAX, hi = UINT32_MAX;
++	if (!low) {
++		lo = NRF_USBD->BMREQUESTTYPE | (NRF_USBD->BREQUEST << 8) |
++		     (NRF_USBD->WVALUEL << 16) | (NRF_USBD->WVALUEH << 24);
++		hi = NRF_USBD->WINDEXL | (NRF_USBD->WINDEXH << 8) |
++		     (NRF_USBD->WLENGTHL << 16) | (NRF_USBD->WLENGTHH << 24);
++	}
++	uhk_nrf_trace(1, lo, hi, low);
+ #endif
+ 	LOG_DBG("USBD event: Setup (rt:%.2x r:%.2x v:%.4x i:%.4x l:%u )",
+ 		       NRF_USBD->BMREQUESTTYPE, NRF_USBD->BREQUEST,
+@@ -520,6 +561,7 @@ static void ev_usbevent_handler(void)
+ 	uint32_t event = NRF_USBD->EVENTCAUSE;
+ #ifdef CONFIG_UHK_USB_LEFT_RELAY
+ 	atomic_set(&UhkNrfUsbDiag[12], event);
++	uhk_nrf_trace(3, 0, 0, event | (NRF_USBD->LOWPOWER << 24));
+ #endif
+ 
+ 	/* Clear handled events */
+@@ -538,6 +580,9 @@ static void ev_usbevent_handler(void)
+ 	if (event & USBD_EVENTCAUSE_RESUME_Msk) {
+ 		LOG_DBG("USBD event: RESUME");
+ 		m_bus_suspend = false;
++#ifdef CONFIG_UHK_USB_LEFT_RELAY
++		uhk_nrf_trace_registers(6);
++#endif
+ 
+ 		k_event_post(&drv_evt, BIT(UDC_NRF_EVT_RESUME));
+ 	}
+@@ -975,6 +1020,7 @@ static void nrf_usbd_legacy_start(bool enable_sof)
+ #ifdef CONFIG_UHK_USB_LEFT_RELAY
+ 	uint32_t low = NRF_USBD->LOWPOWER;
+ 	atomic_set(&UhkNrfUsbDiag[7], low ? 4 : (NRF_USBD->USBPULLUP << 1));
++	uhk_nrf_trace_registers(5);
+ #endif
+ }
+ 
+@@ -1477,6 +1523,7 @@ static void udc_nrf_thread_handler(const struct device *dev)
+ 	if (evt & BIT(UDC_NRF_EVT_RESUME)) {
+ #ifdef CONFIG_UHK_USB_LEFT_RELAY
+ 		atomic_inc(&UhkNrfUsbDiag[10]);
++		uhk_nrf_trace(4, 0, 0, NRF_USBD->LOWPOWER);
+ #endif
+ 		LOG_INF("RESUMING from suspend");
+ 		udc_set_suspended(dev, false);
+-- 
+2.43.0
+
