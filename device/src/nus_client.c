@@ -189,11 +189,15 @@ int NusClient_SendMessage(message_t* msg) {
         return -1;
     }
 
+#if DEBUG_SEMAPHORES
+    SEM_TAKE(&nusBusy);
+#else
     err = k_sem_take(&nusBusy, K_MSEC(256));
     if (err) {
         Trace_Printc("r2");
         return err;
     }
+#endif
 
     // From here on every exit path must release the semaphore: send_raw_buffer
     // gives it back on error, and the `sent` callback gives it back on success.
