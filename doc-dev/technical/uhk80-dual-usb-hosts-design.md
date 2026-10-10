@@ -3,8 +3,10 @@
 Experimental firmware, disabled by default. The right and left USB ports are
 independently selectable hosts; the right remains the keyboard controller.
 The [development guide](uhk80-dual-usb-hosts-development.md) covers build, test and
-runtime commands. The [PRD](uhk80-dual-usb-hosts-prd.md) defines release acceptance.
-The cleaned feature has not been flashed; hardware acceptance remains pending.
+runtime commands. The [scope document](uhk80-dual-usb-hosts-prd.md) defines
+firmware requirements and acceptance.
+The minimized candidate is built and flashed, with user-reported working behavior.
+The development guide records validation and the remaining hardware acceptance.
 
 ## Architecture and code map
 
@@ -89,13 +91,54 @@ Host feedback applies only to the selected route. Resume needs fresh setup.
 An awake selected wireless left host requests 7.5 ms/zero skipped events.
 
 `CONFIG_UHK_USB_LEFT_RELAY` defaults off. Experimental presets enable both halves;
-`CONFIG_UHK_USB_LEFT_DEV_SLOT` on right adds `USB_Left_Dev` in an empty regular
+`CONFIG_UHK_USB_LEFT_DEV_SLOT` on right adds `USB Left` in an empty regular
 slot, reuses a unique existing left slot, and rejects duplicates/full capacity.
 Reserved/paired slots and saved bytes are preserved. The RAM overlay returns
-after successful configuration reload. Agent configuration/UI support is pending.
+after successful configuration reload. Agent GUI changes are outside this scope.
+
+## Agent integration handoff
+
+Implement configuration/UI support in the Agent repository using the existing
+host-connection model; this firmware change adds no USB command or config format.
+In the local Agent checkout at `a10a251f`, the serializer already defines
+`UsbRight = 1`, `UsbLeft = 2` and both requested labels in
+`packages/uhk-common/src/config-serializer/config-items/host-connection.ts`.
+The UI entry point is `packages/uhk-web/src/app/components/device/host-connections/`.
+Recheck the target Agent branch before changing these existing definitions.
+
+| Firmware connection type | Serialized value | Default name |
+| --- | --- | --- |
+| `HostConnectionType_UsbHidRight` | 1 | `USB Right` |
+| `HostConnectionType_UsbHidLeft` | 2 | `USB Left` |
+
+- Store the appropriate default name when creating a new entry. Preserve existing
+  custom names (such as `PC`), host indices, bindings and all unrelated settings.
+  The OLED uses these defaults for unnamed USB entries; the reserved right USB
+  fallback is also named `USB Right`. Display fallback names are not macro aliases.
+- Use at most one left entry among the 22 serialized slots. Reuse an existing
+  left entry or an empty regular slot; do not overwrite paired/reserved entries
+  or silently reorder the list. Surface full capacity and duplicate-left errors.
+  USB entries serialize type, switchover and name, without a Bluetooth address.
+- The RAM slot is a temporary development bridge until Agent can save a left
+  entry. It is recreated after reload, is absent from saved configuration, and
+  yields to a unique saved left entry. Keep the existing `switchover` preference;
+  the RAM default is false. Normal manual cycling still includes the entry.
+- Use existing selection commands: `switchHost 'USB Left'`, a one-based host
+  index, or `switchHost nextActive`. Quote names containing spaces and use the
+  stored name for custom entries. Update macros referring to the old RAM-only
+  `USB_Left_Dev` name; cycling and index bindings need no name migration.
+- Require compatible relay-enabled firmware on both UHK80 halves. The enum and
+  the baseline firmware version alone do not advertise this feature. Before
+  release, agree Agent capability/version gating and release presets; normal
+  firmware presets still disable the relay, and Agent cannot enable a build flag.
+  Saving a left entry must not depend on `CONFIG_UHK_USB_LEFT_DEV_SLOT`.
+- Verify save/reload/reboot, custom names, quoted macros, cycling, full/duplicate
+  slots, and disabled/older firmware behavior together in the two repositories.
+  Complete the firmware hardware acceptance matrix before calling the feature
+  release-ready. Keep the separate baseline USB-C reconnect issue out of scope.
 
 Feature tests cover protocol, routes, completions, scheduler and wireless/NUS
 ownership. Builds check integration; physical transfer timing, separate-computer
-isolation, handover, sleep/wake and the PRD soak/resource targets still need
-hardware acceptance. The separate [baseline USB-C reconnect limitation](uhk80-dual-usb-hosts-development.md#known-baseline-limitation)
+isolation, handover and sleep/wake still need hardware acceptance. The separate
+[baseline USB-C reconnect limitation](uhk80-dual-usb-hosts-development.md#known-baseline-limitation)
 and its investigation history are recorded in the development guide.

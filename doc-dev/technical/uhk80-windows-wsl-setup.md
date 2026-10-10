@@ -1,13 +1,12 @@
 # UHK80 firmware toolchain on Windows with WSL
 
 This recipe uses WSL2 Ubuntu 24.04 for builds and native Windows for USB
-flashing, without a debug probe. It records the toolchain used for the cloud
-builds on 2026-10-09. Use a firmware checkout containing the experimental
+flashing, without a debug probe. Use a firmware checkout containing the experimental
 relay presets to follow the [dual USB development guide](uhk80-dual-usb-hosts-development.md).
 
 ## Local setup: WSL2 Ubuntu 24.04, x86-64
 
-Build inside WSL's Linux filesystem, such as `~/uhk-workspace`, using VS Code's
+Build inside WSL's Linux filesystem, such as `~/uhk-dual-usb-clean`, using VS Code's
 WSL extension. Use native Windows USB flashing so you do not need USB passthrough
 or have to manage forwarding a device that changes from HID to a serial
 bootloader. A probe is not required for builds or normal USB updates.
@@ -19,7 +18,7 @@ NCS v2.8.0 in its installation/launch helper, so do not use that helper for this
 baseline. You do not need the separate MCUX/UHK60 toolchain to work on UHK80.
 
 The companion [Python requirements](uhk80-python-requirements.txt) records the
-Python packages used by the successful cloud builds. The commands
+Python packages used by the verified builds. The commands
 below are a fresh-workspace recipe; do not run initialization/update over an
 existing SDK checkout containing local changes.
 
@@ -30,8 +29,10 @@ sudo apt-get update
 sudo apt-get install -y git python3-venv python3-dev build-essential \
   gperf device-tree-compiler curl wget xz-utils unzip file libmagic1
 
-mkdir -p ~/uhk-workspace
-cd ~/uhk-workspace
+# Choose a new directory; existing experiment SDKs can contain unrelated patches.
+UHK_WORKSPACE="$HOME/uhk-dual-usb-clean"
+mkdir "$UHK_WORKSPACE"
+cd "$UHK_WORKSPACE"
 git clone https://github.com/leadZERO/UHK-Firmware.git firmware
 # Before proceeding, check out the branch containing the experimental relay.
 # If it is unpublished, copy that firmware checkout into this directory instead.
@@ -60,7 +61,7 @@ PY
 Install the Linux SDK and ARM compiler in the workspace:
 
 ```bash
-cd ~/uhk-workspace
+cd "$UHK_WORKSPACE"
 mkdir -p .tools/downloads
 cd .tools/downloads
 curl --fail --location --remote-name \
@@ -81,7 +82,7 @@ cd ../zephyr-sdk-0.17.4
 Create a reusable environment activation file:
 
 ```bash
-cd ~/uhk-workspace
+cd "$UHK_WORKSPACE"
 cat > activate-uhk80.sh <<'ENV'
 # Source from bash; paths follow the location of this file.
 uhk_workspace="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -98,8 +99,9 @@ west config build.cmake-args -- -Wno-dev
 python -m pip check
 ```
 
-For each later terminal, source `~/uhk-workspace/activate-uhk80.sh` and enter
-`~/uhk-workspace/firmware`. Do not rerun `west update` or reapply patches as part
-of ordinary builds. An intentional SDK update resets vendor checkouts to their
+For each later terminal, set `UHK_WORKSPACE` to the chosen absolute directory, source
+`"$UHK_WORKSPACE/activate-uhk80.sh"` and enter `"$UHK_WORKSPACE/firmware"`.
+Do not rerun `west update` or reapply patches as part of ordinary builds.
+An intentional SDK update resets vendor checkouts to their
 manifest revisions and requires patches to be reapplied; save any vendor edits
 first. Run the patch helper only against fresh, unpatched revisions.

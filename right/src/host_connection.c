@@ -29,7 +29,7 @@ host_connection_t HostConnections[HOST_CONNECTION_COUNT_MAX] = {
     },
     [HOST_CONNECTION_COUNT_MAX - 1] = {
         .type = HostConnectionType_UsbHidRight,
-        .name = (string_segment_t){ .start = "USB Device (Backup)", .end = NULL },
+        .name = (string_segment_t){ .start = "USB Right", .end = NULL },
         .switchover = true,
     },
 };

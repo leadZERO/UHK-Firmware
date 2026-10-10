@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #define __USB_LEFT_RELAY_UHK_H__
 #define __CONNECTIONS_H__
@@ -14,6 +15,7 @@
 #define __BT_CONN_H__
 #define __USB_STATE_H__
 #define DEVICE_IS_UHK80_RIGHT 1
+#define __ZEPHYR__ 1
 #define SERIALIZED_HOST_CONNECTION_COUNT_MAX 22
 #define HOST_CONNECTION_COUNT_MAX 24
 #define ConnectionId_HostConnectionFirst 1
@@ -148,6 +150,96 @@ static void resetPlatform(void)
     oldLeftSlots = 0;
     routeGeneration = 0;
     usbGeneration = observedLocalUsbGeneration = quiesceCalls = usbNeutralCalls = 0;
+}
+
+/* Exercise the actual switchHost command and route coordinator. Only argument
+ * parsing and the existing host-selection entry points are platform fakes. */
+#include "macro_result_under_test.inc"
+typedef struct { const char *argument; bool consumed; } parser_context_t;
+static bool Macros_DryRun;
+static unsigned macroSelections;
+static bool Macros_IsNUM(parser_context_t *ctx)
+{
+    return ctx->argument[0] >= '0' && ctx->argument[0] <= '9';
+}
+static int32_t Macros_ConsumeInt(parser_context_t *ctx)
+{
+    ctx->consumed = true;
+    return strtol(ctx->argument, NULL, 10);
+}
+static bool ConsumeToken(parser_context_t *ctx, const char *token)
+{
+    if (strcmp(ctx->argument, token)) { return false; }
+    ctx->consumed = true;
+    return true;
+}
+static void Macros_ConsumeStringToken(parser_context_t *ctx) { ctx->consumed = true; }
+static void selectMacroHost(uint8_t connection)
+{
+    ++macroSelections;
+#ifdef CONFIG_UHK_USB_LEFT_RELAY
+    if (HostRoute_Request(connection, true)) { return; }
+#endif
+    Connections_CommitHost(connection, true);
+}
+static void HostConnections_SelectByHostConnIndex(uint8_t index) { selectMacroHost(index + 1); }
+static void HostConnections_SelectByName(parser_context_t *ctx)
+{
+    if (!strcmp(ctx->argument, "USB Left")) { selectMacroHost(2); }
+}
+/* These parser branches are compiled but not needed by the route matrix below. */
+static void HostConnections_SelectNextConnection(void) { assert(false); }
+static void HostConnections_SelectPreviousConnection(void) { assert(false); }
+static void HostConnections_SelectNextActiveConnection(void) { assert(false); }
+static void HostConnections_SelectPreviousActiveConnection(void) { assert(false); }
+static void HostConnections_SelectLastConnection(void) { assert(false); }
+static void HostConnections_SelectLastSelectedConnection(void) { assert(false); }
+#include "switch_host_under_test.inc"
+
+static void switchMacroYieldsOnlyForPendingRoute(void)
+{
+    const struct {
+        uint8_t from, to;
+        const char *argument;
+        bool pending, valid;
+    } cases[] = {
+        {1, 2, "USB Left", true, true},
+        {2, 1, "1", true, true},
+        {1, 3, "3", false, true},
+        {3, 1, "1", false, true},
+        {1, 1, "1", false, true},
+        {2, 2, "USB Left", false, true},
+        {1, 1, "missing-host", false, false},
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+        resetPlatform();
+        HostConnections[2].type = ConnectionType_BtHid;
+        CurrentHostConnectionId = cases[i].from;
+        active = CurrentHostConnectionId == 2;
+        macroSelections = 0;
+        parser_context_t ctx = {.argument = cases[i].argument};
+        macro_result_t result = processSwitchHostCommand(&ctx);
+        bool pending = false;
+#ifdef CONFIG_UHK_USB_LEFT_RELAY
+        pending = cases[i].pending;
+#endif
+        assert(ctx.consumed && (result & MacroResult_ActionFinishedFlag));
+        assert(!!(result & MacroResult_YieldFlag) == pending);
+        assert(HostRoute_Pending() == pending);
+        assert(macroSelections == cases[i].valid);
+        assert(CurrentHostConnectionId == (pending ? cases[i].from : cases[i].to));
+        active = true; // Matching new-route preparation completes.
+        HostRoute_Process();
+        assert(!HostRoute_Pending() && CurrentHostConnectionId == cases[i].to);
+        assert(macroSelections == cases[i].valid); // Command was consumed once.
+    }
+    resetPlatform();
+    macroSelections = 0;
+    Macros_DryRun = true;
+    parser_context_t ctx = {.argument = "2"};
+    assert(processSwitchHostCommand(&ctx) == MacroResult_Finished);
+    assert(ctx.consumed && !macroSelections && !HostRoute_Pending());
+    Macros_DryRun = false;
 }
 static void usbReconnectMustDeliverAllUp(void)
 {
@@ -306,5 +398,6 @@ int main(void)
     sleepingOldUsbKeepsNeutralDebt();
     configReplacementIsBarrier();
     usbReconnectMustDeliverAllUp();
+    switchMacroYieldsOnlyForPendingRoute();
     puts("host route tests passed");
 }

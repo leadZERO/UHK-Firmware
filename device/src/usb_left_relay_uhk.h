@@ -25,7 +25,6 @@ int UsbLeft_SendControls(const hid_controls_report_t *report);
 void UsbLeft_LocalComplete(uint8_t kind, uint64_t token, uint32_t sequence, bool success);
 void UsbLeft_Provision(void);
 int UsbLeft_ProvisionResult(void);
-void UsbLeft_RequestControl(uint8_t operation);
 
 /* Local C++ HID adapter. All submission/completion identity is endpoint-local. */
 int Hid_LocalUsbSubmit(

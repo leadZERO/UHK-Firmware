@@ -112,7 +112,9 @@ static void deduplicateUnregisteredConnections(void) {
 
 parser_error_t ParseHostConnections(config_buffer_t *buffer) {
     int errorCode;
+#ifdef CONFIG_UHK_USB_LEFT_RELAY
     uint8_t leftCount=0;
+#endif
 
     for (uint8_t hostConnectionId = 0; hostConnectionId < SERIALIZED_HOST_CONNECTION_COUNT_MAX; hostConnectionId++) {
         host_connection_t dummy = { .type = HostConnectionType_Empty };
@@ -131,12 +133,10 @@ parser_error_t ParseHostConnections(config_buffer_t *buffer) {
             ConfigParser_Error(buffer,"Duplicate USB Left host connection\n");
             return ParserError_InvalidHostType;
         }
-#else
-        (void)leftCount;
 #endif
     }
 
-    if (!ParserRunDry) { deduplicateUnregisteredConnections(); }
+    deduplicateUnregisteredConnections();
 
     return ParserError_Success;
 }

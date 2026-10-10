@@ -29,7 +29,7 @@ extern "C" {
 #include "usb_state.h"
 #include "utils.h"
 #if DEVICE_IS_UHK60
-    #include "i2c_watchdog.h"
+#include "i2c_watchdog.h"
 #endif
 }
 #include "command_app.hpp"
@@ -80,37 +80,35 @@ extern "C" void Hid_DumpTransportState(void)
         (int)(mouse_app::usb_handle().session() != nullptr),
         (int)(controls_app::usb_handle().session() != nullptr),
         (int)(command_app::usb_handle().session() != nullptr));
-    c2usb_log("  powerMode=%d usbUp=%d usbSuspended=%d\n", (int)CurrentPowerMode,
-        (int)UsbState_TransportUp, (int)UsbState_HostIsSuspended);
+    c2usb_log("  powerMode=%d usbUp=%d usbSuspended=%d\n",
+        (int)CurrentPowerMode, (int)UsbState_TransportUp, (int)UsbState_HostIsSuspended);
     uint32_t now = Timer_GetCurrentTime();
-    c2usb_log("  key life (ms ago): scan(%d)=%u queued=%u/forceQueued=%u/applied=%u action=%u "
-              "delivered=%u\n",
+    c2usb_log("  key life (ms ago): scan(%d)=%u queued=%u/forceQueued=%u/applied=%u action=%u delivered=%u\n",
         (int)KeyLifeTimes.scanActive, now - KeyLifeTimes.scan, now - KeyLifeTimes.queued,
         now - KeyLifeTimes.forceQueued, now - KeyLifeTimes.applied, now - KeyLifeTimes.action,
         now - KeyLifeTimes.delivered);
     c2usb_log("  inactive kb report: %s\n", Utils_GetUsbReportString(GetInactiveKeyboardReport()));
-    c2usb_log("  semaphore (inFlight/retries/needsResend): kb=%d/%d/%d ctl=%d/%d/%d mouse=%d/%d/%d "
-              "givenUp=%d\n",
-        (int)UsbSemaphore.keyboard.inFlight, (int)UsbSemaphore.keyboard.retries,
-        (int)UsbSemaphore.keyboard.needsResending, (int)UsbSemaphore.controls.inFlight,
-        (int)UsbSemaphore.controls.retries, (int)UsbSemaphore.controls.needsResending,
-        (int)UsbSemaphore.mouse.inFlight, (int)UsbSemaphore.mouse.retries,
-        (int)UsbSemaphore.mouse.needsResending, (int)UsbReportSender_GivenUp);
+    c2usb_log("  semaphore (inFlight/retries/needsResend): kb=%d/%d/%d ctl=%d/%d/%d mouse=%d/%d/%d givenUp=%d\n",
+        (int)UsbSemaphore.keyboard.inFlight, (int)UsbSemaphore.keyboard.retries, (int)UsbSemaphore.keyboard.needsResending,
+        (int)UsbSemaphore.controls.inFlight, (int)UsbSemaphore.controls.retries, (int)UsbSemaphore.controls.needsResending,
+        (int)UsbSemaphore.mouse.inFlight, (int)UsbSemaphore.mouse.retries, (int)UsbSemaphore.mouse.needsResending,
+        (int)UsbReportSender_GivenUp);
     c2usb_log("  throttle: %u ms ago blocked=%d reasons=0x%x until=in %d ms postponed=0x%x\n",
-        now - MainLifeTimes.throttleTime, (int)MainLifeTimes.throttleBlocked,
-        MainLifeTimes.throttleBlockReasons, (int)(MainLifeTimes.throttleBlockedUntil - now),
-        (unsigned)MainLifeTimes.throttlePostponedMasks);
+        now - MainLifeTimes.throttleTime,
+        (int)MainLifeTimes.throttleBlocked, MainLifeTimes.throttleBlockReasons,
+        (int)(MainLifeTimes.throttleBlockedUntil - now), (unsigned)MainLifeTimes.throttlePostponedMasks);
 #if DEVICE_IS_UHK60
     c2usb_log("  isr (start/end ms ago): usb=%u/%u pit=%u/%u wdog=%u/%u i2c=%u/%u btn=%u/%u\n",
-        now - IsrLifeTimes.usb.start, now - IsrLifeTimes.usb.end, now - IsrLifeTimes.pitTimer.start,
-        now - IsrLifeTimes.pitTimer.end, now - IsrLifeTimes.i2cWatchdog.start,
-        now - IsrLifeTimes.i2cWatchdog.end, now - IsrLifeTimes.i2cMain.start,
-        now - IsrLifeTimes.i2cMain.end, now - IsrLifeTimes.resetButton.start,
-        now - IsrLifeTimes.resetButton.end);
-    c2usb_log("  i2c watchdog: watch=%u recoveries=%u\n", (unsigned)I2cWatchdog_WatchCounter,
-        (unsigned)I2cWatchdog_RecoveryCounter);
-    c2usb_log("  stack: used=%u/%u headroom=%d%s\n", (unsigned)stackUsed,
-        (unsigned)Debug_StackSize(), (int)stackHeadroom, stackHeadroom < 0 ? " (OVERFLOW)" : "");
+        now - IsrLifeTimes.usb.start, now - IsrLifeTimes.usb.end,
+        now - IsrLifeTimes.pitTimer.start, now - IsrLifeTimes.pitTimer.end,
+        now - IsrLifeTimes.i2cWatchdog.start, now - IsrLifeTimes.i2cWatchdog.end,
+        now - IsrLifeTimes.i2cMain.start, now - IsrLifeTimes.i2cMain.end,
+        now - IsrLifeTimes.resetButton.start, now - IsrLifeTimes.resetButton.end);
+    c2usb_log("  i2c watchdog: watch=%u recoveries=%u\n",
+        (unsigned)I2cWatchdog_WatchCounter, (unsigned)I2cWatchdog_RecoveryCounter);
+    c2usb_log("  stack: used=%u/%u headroom=%d%s\n",
+        (unsigned)stackUsed, (unsigned)Debug_StackSize(), (int)stackHeadroom,
+        stackHeadroom < 0 ? " (OVERFLOW)" : "");
 #endif
 }
 
@@ -446,12 +444,10 @@ void mouse_report_sent_callback(hid::session &session, std::span<const uint8_t> 
     return;
 #endif
 
-    if (UnreliableTransportTestMode &&
-        (Utils_Random() % 7 == 0 || Timer_GetCurrentTime() / (1024 * 32) == 0)) {
+    if (UnreliableTransportTestMode && (Utils_Random() % 7 == 0 || Timer_GetCurrentTime() / (1024*32) == 0)) {
         return;
     }
-    report_sink_t sink =
-        session.channel() == hid::channel::USB ? ReportSink_Usb : ReportSink_BleHid;
+    report_sink_t sink = session.channel() == hid::channel::USB ? ReportSink_Usb : ReportSink_BleHid;
     UsbSemaphore_Release(&UsbSemaphore.mouse);
     UsbScheduler_ReportDelivered(sink);
     if (sink == ReportSink_Usb) {
@@ -542,8 +538,7 @@ void controls_report_sent_callback(hid::session &session, std::span<const uint8_
     return;
 #endif
 
-    report_sink_t sink =
-        session.channel() == hid::channel::USB ? ReportSink_Usb : ReportSink_BleHid;
+    report_sink_t sink = session.channel() == hid::channel::USB ? ReportSink_Usb : ReportSink_BleHid;
     UsbSemaphore_Release(&UsbSemaphore.controls);
     UsbScheduler_ReportDelivered(sink);
     if (sink == ReportSink_Usb) {
@@ -642,8 +637,8 @@ void keyboard_leds_changed_callback(keyboard_base_session &session)
         struct bt_conn *conn = static_cast<ble_session &>(session).get_conn();
         int8_t peerId = conn ? GetPeerIdByConn(conn) : PeerIdUnknown;
         connectionId = (peerId >= PeerIdFirstHost && peerId <= PeerIdLastHost)
-                           ? (connection_id_t)Peers[peerId].connectionId
-                           : ConnectionId_Invalid;
+            ? (connection_id_t)Peers[peerId].connectionId
+            : ConnectionId_Invalid;
     }
     if (Connections_IsCurrentHost(connectionId)) {
         setKeyboardLedsState(session.get_leds_report());

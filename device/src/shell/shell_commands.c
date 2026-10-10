@@ -554,18 +554,8 @@ static int cmd_uhk_jitterTest(const struct shell *shell, size_t argc, char *argv
 
 #ifdef CONFIG_UHK_USB_LEFT_RELAY
 static int cmd_uhk_usbLeft(const struct shell *shell,size_t argc,char *argv[]) {
-    if (argc>1 && strcmp(argv[1],"status")) {
-#ifndef CONFIG_UHK_USB_LEFT_DEV_SLOT
-        return -ENOTSUP;
-#else
-        if (!strcmp(argv[1],"provision") && argc==2) { UsbLeft_RequestControl(1); }
-        else if (!strcmp(argv[1],"retry") && argc==2) { UsbLeft_RequestControl(4); }
-        else if (!strcmp(argv[1],"select") && argc==3) {
-            if (!strcmp(argv[2],"left")) { UsbLeft_RequestControl(2); }
-            else if (!strcmp(argv[2],"right")) { UsbLeft_RequestControl(3); }
-            else { return -EINVAL; }
-        } else { return -EINVAL; }
-#endif
+    if (argc>2 || (argc==2 && strcmp(argv[1],"status"))) {
+        return -EINVAL;
     }
     const relay_t *r=UsbLeft_GetState();
     uint8_t linkConnection = UsbLeft_LinkConnection();
@@ -610,7 +600,7 @@ void InitShellCommands(void)
 
     SHELL_STATIC_SUBCMD_SET_CREATE(uhk_cmds,
 #ifdef CONFIG_UHK_USB_LEFT_RELAY
-        SHELL_CMD_ARG(usbLeft,NULL,"status | provision | select left/right | retry",cmd_uhk_usbLeft,1,2),
+        SHELL_CMD_ARG(usbLeft,NULL,"Show USB Left status",cmd_uhk_usbLeft,1,1),
 #endif
         SHELL_CMD_ARG(keylog, NULL, "get/set key logging", cmd_uhk_keylog, 1, 1),
 #if !DEVICE_IS_UHK_DONGLE

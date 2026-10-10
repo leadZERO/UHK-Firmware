@@ -333,13 +333,7 @@ void mainRuntime(void) {
 #elif DEVICE_IS_UHK_DONGLE
     while (true)
     {
-        #ifdef CONFIG_UHK_USB_LEFT_RELAY
-        UsbLeft_Process();
-        #endif
         Messenger_ProcessQueue();
-        #ifdef CONFIG_UHK_USB_LEFT_RELAY
-        UsbLeft_Process();
-        #endif
         RunDongleLogic();
         scheduleNextRun();
         detectSpinningEventLoop();

@@ -25,6 +25,9 @@ It covers drain/release/preparation ordering, held-source gating, offline
 selection and recovery, preparation timeout, request coalescing, generation
 changes, indefinitely unproven drains, deferred sleeping-host neutral reports
 and configuration replacement/removal of the selected slot.
+The actual `switchHost` command is compiled with relay enabled and disabled:
+left handovers yield while pending; right/BLE, active same-host and invalid-name
+selections retain synchronous behavior. Dry-run selection has no side effects.
 It also compiles the actual USB-generation observation block from the UHK
 adapter and checks that reconnect/protocol replacement drains old transfers and
 confirms all-up delivery before reopening input. A delayed all-up completion

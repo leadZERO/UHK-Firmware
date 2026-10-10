@@ -21,7 +21,7 @@
 _Static_assert(
     USB_LEFT_RELAY_MAX_PACKET + 4 <= MAX_LINK_PACKET_LENGTH, "relay exceeds Messenger MTU");
 static relay_t relay;
-static atomic_t uartIngressGeneration, bleIngressGeneration, controlRequest;
+static atomic_t uartIngressGeneration, bleIngressGeneration;
 static uint8_t observedConnection;
 static uint32_t observedGeneration;
 #if DEVICE_IS_UHK80_RIGHT
@@ -205,11 +205,6 @@ void UsbLeft_Receive(
     }
     Relay_Receive(&relay, packet, len);
 }
-void UsbLeft_RequestControl(uint8_t operation)
-{
-    atomic_set(&controlRequest, operation);
-    EventVector_WakeMain();
-}
 void UsbLeft_Process(void)
 {
     if (!initialized) {
@@ -253,20 +248,6 @@ void UsbLeft_Process(void)
         observedLocalUsbGeneration = localGeneration;
         if (Connections_Type(CurrentHostConnectionId) == ConnectionType_UsbHidRight) {
             HostRoute_LocalUsbChanged();
-        }
-    }
-    uint8_t control = atomic_set(&controlRequest, 0);
-    if (control) {
-    #ifdef CONFIG_UHK_USB_LEFT_DEV_SLOT
-        UsbLeft_Provision();
-    #endif
-        if (control == 4) {
-            Relay_SetLink(&relay, false);
-            Relay_SetLink(&relay, UsbLeft_LinkConnection() != ConnectionId_Invalid);
-        }
-        if (control == 2 || control == 3) {
-            Connections_HandleSwitchover(
-                control == 2 ? ConnectionId_UsbHidLeft : ConnectionId_UsbHidRight, true);
         }
     }
     HostRoute_Process();
@@ -393,7 +374,7 @@ void UsbLeft_Provision(void)
         if (HostConnections[i].type != HostConnectionType_Empty) {
             continue;
         }
-        static const char name[] = "USB_Left_Dev";
+        static const char name[] = "USB Left";
         HostConnections[i] = (host_connection_t){.type = HostConnectionType_UsbHidLeft,
             .name = {.start = name, .end = name + sizeof(name) - 1},
             .switchover = false};

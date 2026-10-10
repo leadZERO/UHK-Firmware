@@ -26,11 +26,14 @@ void keyboard_app::set_rollover(rollover_t mode)
 hid::session &keyboard_app::start(const hid::session::params &params)
 {
     assert(!session_.has_value());
+#ifndef CONFIG_UHK_USB_LEFT_RELAY
+    UsbState_SetUsbTransportUp(true);
+#endif
     auto &session = session_.emplace(params);
 #ifdef CONFIG_UHK_USB_LEFT_RELAY
     Hid_LocalUsbSessionChanged();
-#endif
     UsbState_SetUsbTransportUp(true);
+#endif
     // has to run after the session is in place - the protocol is read off it
 #ifdef __ZEPHYR__
     if (Connections_IsCurrentHost(ConnectionId_UsbHidRight)) {
