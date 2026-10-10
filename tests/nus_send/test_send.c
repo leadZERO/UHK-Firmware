@@ -7,6 +7,7 @@
 
 #define MAX_LINK_PACKET_LENGTH 128
 #define K_MSEC(ms) (ms)
+#define K_FOREVER UINT32_MAX
 typedef struct {
     const uint8_t *data;
     uint16_t len;
@@ -33,9 +34,20 @@ static void Messenger_UpdateWatermarks(message_t *msg) { ++msg->wm; }
 static void Trace_Printc(const char *text) { (void)text; }
 static void LOG_WRN(const char *fmt, ...) { (void)fmt; }
 
+#if DEBUG_SEMAPHORES
+static unsigned CurrentWatch, watchCalls;
+static void WatchSemaforeTake(struct k_sem *sem, const char *filename, unsigned watch) {
+    assert(filename && watch == 0);
+    ++watchCalls;
+    assert(k_sem_take(sem, K_FOREVER) == 0);
+}
+/* Use the production watcher macros, with platform calls mocked above. */
+#include "debug_semaphore.inc"
+#else
 /* Preserve the release-build macro's log-and-continue timeout behavior
  * when testing unchanged source. */
 #define SEM_TAKE(sem) ((void)k_sem_take(sem, K_MSEC(256)))
+#endif
 
 static int sdkResult;
 static uint8_t submitted[MAX_LINK_PACKET_LENGTH];
@@ -80,7 +92,17 @@ int main(void) {
                      .dst = 21, .idsUsed = 1, .messageId = {1}};
     unsigned capacity = permits;
 
-#if TEST_LIFETIME
+#if DEBUG_SEMAPHORES
+    assert(sendMessage(&msg) == 0);
+    assert(lastTimeout == K_FOREVER && watchCalls == 1 && sdkCalls == 1);
+    assert(permits == capacity - 1);
+    k_sem_give(&nusBusy);
+    CurrentWatch = 1;
+    assert(sendMessage(&msg) == 0);
+    assert(lastTimeout == K_FOREVER && watchCalls == 1 && sdkCalls == 2);
+    assert(permits == capacity - 1);
+    puts("debug sends retain the watcher and unobserved K_FOREVER paths");
+#elif TEST_LIFETIME
     assert(sendMessage(&msg) == 0);
     uint8_t expected[] = {20, 21, 1, 1, 1, 2, 3, 4, 5};
     assert(retainedLen == sizeof(expected));
