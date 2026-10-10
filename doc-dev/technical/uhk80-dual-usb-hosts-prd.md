@@ -1,6 +1,8 @@
 # PRD: UHK80 switching between two wired USB hosts
 
-**Status:** Draft for review; feature not implemented or validated on hardware.
+**Status:** Experimental firmware implemented; full hardware acceptance and
+compatible Agent configuration/UI support remain pending. See the
+[development guide](uhk80-dual-usb-hosts-development.md) for validation boundaries.
 
 **Date:** 2026-10-09
 
@@ -16,8 +18,8 @@ one computer to the right half's USB-C port and the other to the left half's
 USB-C port. They want to switch destinations using the keyboard's existing host
 selection features, without requiring Bluetooth or a dongle on either computer.
 
-Today, the right USB port supports normal wired keyboard use. The left USB port
-supports direct firmware updates, and its application already includes USB HID
+In the research baseline, the right USB port supports normal wired keyboard use.
+The left USB port supports direct firmware updates, and its application already includes USB HID
 interfaces, but it lacks the report forwarding and host-state integration needed
 to serve as a selectable destination for the complete keyboard.
 
@@ -66,7 +68,8 @@ Core scenarios:
 
 - UHK80 left and right firmware, plus compatible Agent configuration/UI support.
 - One computer per half's USB-C port, with both halves powered and running.
-- The existing inter-half bridge cable as the required, fully wired setup.
+- The existing inter-half bridge cable as the preferred, fully wired setup, with
+  fallback over the paired inter-half BLE link when the bridge is unavailable.
 - Complete input reporting and host feedback for both USB destinations.
 - Existing host selection commands and automatic-switchover preferences.
 - Normal USB firmware updates and diagnostics on both halves.
@@ -77,15 +80,17 @@ Core scenarios:
 - A second keymap/macro engine, separate configurations per computer, or
   simultaneous typing to both computers.
 - Hardware modifications, a new bootloader, or a replacement USB stack.
-- New Bluetooth/dongle behavior or a new radio-disable control.
+- New computer-facing Bluetooth/dongle behavior or a new radio-disable control.
 - Live breakpoint debugging over the USB firmware-update connection.
+- Diagnosing or fixing the baseline USB-C warm reconnect failure, which also
+  occurs on official v18.0.4 and is tracked separately in
+  [issue #1](https://github.com/leadZERO/UHK-Firmware/issues/1).
 
 The right half remains the keyboard's controller. The left half acts as a USB
-input endpoint for the selected left host. Existing inter-half wireless fallback
-may remain available under current policy, but the release must demonstrate the
-fully wired path. New relay operation over Bluetooth is not a first-release
-acceptance requirement; documentation must distinguish that from USB connections
-to the computers.
+input endpoint for the selected left host. Release acceptance covers both the
+fully wired path and relay fallback over the paired inter-half BLE link, including
+fresh-session handover when the bridge returns. The computer connections remain
+USB in either case; neither computer needs Bluetooth pairing.
 
 ## 5. User experience and configuration
 
@@ -101,8 +106,8 @@ explains that a slot must be freed; it must not silently overwrite one.
 Selection remains separate from availability. Existing keyboard/Agent indicators
 show the selected host's name and distinguish ready, sleeping, and unavailable
 states where those surfaces support status display. Setup help explains the
-bridge cable and the requirement for both halves to run. It must not imply that
-the left half becomes an independent keyboard.
+bridge preference, paired BLE fallback and the requirement for both halves to run.
+It must not imply that the left half becomes an independent keyboard.
 
 Examples using the existing macro syntax:
 
@@ -205,7 +210,7 @@ This section records the recommended approach, not a complete technical design.
 ```mermaid
 flowchart LR
   A[Computer A] <-->|USB-C| R[Right: keymaps, macros, host selection]
-  R <-->|Existing wired bridge| L[Left: scanning and USB report relay]
+  R <-->|Wired bridge preferred; paired BLE fallback| L[Left: scanning and USB report relay]
   L <-->|USB-C| B[Computer B]
 ```
 
@@ -257,7 +262,7 @@ firmware/Agent versions, scan settings, and which inter-half route is active.
 | Held inputs and queued output | Switching with held modifiers, keys, pointer buttons, media keys, and an active macro satisfies the transition contract. No reachable host retains stuck state; no old output reaches the new host. |
 | Host feedback and protocol | Different lock states and scroll settings remain independent. Test BOOT, 6KRO, and NKRO where supported; changing one endpoint's mode does not corrupt the other. |
 | Offline, suspend, and resume | Explicit offline selection does not leak input or replay it later. Supported wakeup works; denied wakeup remains selected and accurately indicated. Configured automatic switchover still behaves as specified. |
-| Link loss and half reboot | Disconnect/reconnect the bridge and reboot either half during held input. Verify unavailable state, endpoint clearing, fresh-session recovery, and no incorrect destination. Test any retained alternate-link fallback separately. |
+| Link loss and half reboot | Disconnect/reconnect the bridge and reboot either half during held input. Verify paired BLE fallback and bridge restoration use fresh sessions without stale input or stuck releases. Loss of both links must clear reachable state and show unavailability; recovery must preserve the selected destination. |
 | Busy link and queues | Sustained typing, macros, and pointer/scroll activity preserves transitions and motion totals while healthy. Forced loss/overflow is observable and recovers without stuck inputs or scanning stalls. |
 | Config migration and Agent | A fresh configuration has both slots. Adding USB Left to existing configuration preserves indices and bindings; occupied-slot handling is explicit. Verify compatible Agent export/import and firmware upgrade flows. |
 | Regression and updates | Right-only USB, existing BLE/dongle selection, both halves' USB updates, and diagnostics remain functional. Run existing checks appropriate to shared code changes. |
