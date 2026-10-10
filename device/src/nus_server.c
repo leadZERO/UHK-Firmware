@@ -107,7 +107,10 @@ int NusServer_SendMessageTo(message_t* msg, struct bt_conn* conn) {
     }
 
     Trace_Printc("c1");
-    SEM_TAKE(&nusBusy);
+    err = k_sem_take(&nusBusy, K_MSEC(256));
+    if (err) {
+        return err;
+    }
     Trace_Printc("c2");
 
     // From here on every exit path must release the semaphore: send_raw_buffer
