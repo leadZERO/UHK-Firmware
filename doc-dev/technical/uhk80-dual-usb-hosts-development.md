@@ -22,6 +22,24 @@ current images, source hashes/diff against `1abf7c1b1`, logs and configuration
 backups. `build/local-uhk80/minimal-host-review/` retains the preceding working
 images and removal-test evidence for rollback.
 
+## Independent fixes in the fork baseline
+
+Fork `master` includes the separately reviewed NUS send ownership fix
+([#7](https://github.com/leadZERO/UHK-Firmware/pull/7)), USB completion metadata fix
+([#8](https://github.com/leadZERO/UHK-Firmware/pull/8)), and UART timeout ownership fix
+([#9](https://github.com/leadZERO/UHK-Firmware/pull/9)). This feature branch merges
+that baseline. The USB patch and UART fix are inherited unchanged; the NUS diff
+adds nonblocking relay sends while preserving ordinary send ownership and debug
+semaphore watching. Use the baseline's single c2usb completion patch, not the
+earlier feature-specific copy. The standalone PRs retain their hardware evidence
+and validation limits; merging them does not complete the feature acceptance matrix.
+
+**Integration validation, 2026-10-12:** all seven relay scripts and the independent
+NUS, UART and USB regression runners pass after the merge, including the NUS
+unchanged-source negative control and nonblocking relay sends with debug semaphore
+watching enabled. The consolidated patch series applies to the pinned c2usb source.
+This integration has not been flashed or rerun through physical acceptance tests.
+
 ## Build and test
 
 Use a fresh Linux-filesystem workspace from the
