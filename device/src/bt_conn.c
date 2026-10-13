@@ -12,6 +12,9 @@
 #endif
 #include "bt_advertise.h"
 #include "bt_conn.h"
+#ifdef CONFIG_UHK_USB_LEFT_RELAY
+#include "usb_left_relay_uhk.h"
+#endif
 #include "bt_scan.h"
 #include "connections.h"
 #include "device_state.h"
@@ -376,10 +379,24 @@ static void configureLatency(struct bt_conn *conn, latency_mode_t latencyMode) {
                 setLatency(conn, &conn_params);
              }
             break;
+        case LatencyMode_UsbLeftRelay: {
+                // Report delivery and its USB ACK cross this link in opposite
+                // directions. Skipping four events backs up ordinary typing.
+                const struct bt_le_conn_param conn_params = BT_LE_CONN_PARAM_INIT(6, 6, 0, 100);
+                setLatency(conn, &conn_params);
+             }
+            break;
     }
 }
 
 static latency_mode_t desiredLatencyMode(connection_id_t connectionId) {
+#if defined(CONFIG_UHK_USB_LEFT_RELAY) && DEVICE_IS_UHK80_RIGHT
+    if (connectionId == ConnectionId_NusServerLeft &&
+        Connections_Type(CurrentHostConnectionId) == ConnectionType_UsbHidLeft &&
+        UsbLeft_LinkConnection() == connectionId && UsbLeft_Awake()) {
+        return LatencyMode_UsbLeftRelay;
+    }
+#endif
     connection_type_t connectionType = Connections_Type(connectionId);
     if (connectionType != ConnectionType_BtHid && connectionType != ConnectionType_NusDongle) {
         // don't sleep right-left link

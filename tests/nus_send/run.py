@@ -52,6 +52,7 @@ def main():
                             "-Werror", "-g", "-fsanitize=address,undefined", "-fno-pie", "-no-pie",
                             "-I", str(directory), f"-DTEST_SERVER={server}",
                             f"-DTEST_LIFETIME={lifetime}", f"-DDEBUG_SEMAPHORES={debug}",
+                            f"-DTEST_RELAY_SEND={int('MessageId_UsbLeftRelay' in source)}",
                             str(ROOT / "tests/nus_send/test_send.c"), "-o", str(binary)], check=True)
             run = subprocess.run([str(binary)], text=True, capture_output=True,
                                  env={**os.environ, "ASAN_OPTIONS": "detect_stack_use_after_return=1"})

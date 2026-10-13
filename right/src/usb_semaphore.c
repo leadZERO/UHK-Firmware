@@ -1,3 +1,6 @@
+#ifdef CONFIG_UHK_USB_LEFT_RELAY
+#include "usb_left_relay_uhk.h"
+#endif
 #include <stdint.h>
 #include <stdbool.h>
 #include <errno.h>
@@ -51,11 +54,15 @@ void UsbSemaphore_Clear(void) {
 }
 
 void UsbSemaphore_Release(report_send_state_t* st) {
+    st->switchActiveReport();
+    UsbSemaphore_Confirm(st);
+}
+
+void UsbSemaphore_Confirm(report_send_state_t* st) {
     if (st == &UsbSemaphore.keyboard) {
         DEBUG_KEY_LIFE(delivered);
     }
 
-    st->switchActiveReport();
     st->retries = 0;
     st->inFlight = false;
     UsbReportSender_GivenUp = false;
@@ -66,6 +73,9 @@ void UsbSemaphore_Release(report_send_state_t* st) {
 
 // NOTE: if we retry too soon, we might get a double report confirmation, confirming this report and the next one, which would make us loose the next one if its transport failes. Low probability in practice.
 bool UsbSemaphore_RecalculateIsReady(void) {
+#ifdef CONFIG_UHK_USB_LEFT_RELAY
+    if (UsbLeft_Pending()) { return false; } // Relay owns immutable retries and its deadline.
+#endif
     if (UsbSemaphore_AnyInFlight() && CurrentPowerMode <= PowerMode_LastAwake) {
         if (Timer_GetElapsedTime(&UpdateUsbReports_LastUpdateTime) < USB_SEMAPHORE_TIMEOUT) {
             return false;

@@ -10,6 +10,11 @@
 
 #define MD5_CHECKSUM_LENGTH 32
 
+// Provisional firmware identity for relay-enabled UHK80 halves. Agent must match
+// this version exactly on both halves until an official support version is agreed.
+// Keep the ordinary release version in scripts/package.json unchanged.
+#define UHK_USB_LEFT_RELAY_FIRMWARE_VERSION { 18, 0, 65535 }
+
 #define VERSION_AT_LEAST(v, MAJ, MIN, PATCH)                                                       \
     (((v).major > (MAJ)) || ((v).major == (MAJ) && (v).minor > (MIN)) ||                           \
         ((v).major == (MAJ) && (v).minor == (MIN) && (v).patch >= (PATCH)))

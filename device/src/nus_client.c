@@ -189,15 +189,20 @@ int NusClient_SendMessage(message_t* msg) {
         return -1;
     }
 
+    bool relayMessage = msg->idsUsed && msg->messageId[0] == MessageId_UsbLeftRelay;
 #if DEBUG_SEMAPHORES
-    SEM_TAKE(&nusBusy);
+    if (relayMessage) {
+        err = k_sem_take(&nusBusy, K_NO_WAIT);
+    } else {
+        SEM_TAKE(&nusBusy);
+    }
 #else
-    err = k_sem_take(&nusBusy, K_MSEC(256));
+    err = k_sem_take(&nusBusy, relayMessage ? K_NO_WAIT : K_MSEC(256));
+#endif
     if (err) {
         Trace_Printc("r2");
         return err;
     }
-#endif
 
     // From here on every exit path must release the semaphore: send_raw_buffer
     // gives it back on error, and the `sent` callback gives it back on success.

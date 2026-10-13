@@ -13,6 +13,8 @@ Bluetooth APIs. It checks an ordinary StateSync packet's asynchronous buffer
 lifetime, timeout behavior, immediate send errors, completion slot release and
 oversized-packet rejection. Debug-mode checks use the production watcher macros
 and verify that both watched and unwatched sends retain `K_FOREVER` waits.
+When testing the left-host feature, they also verify that relay sends remain
+nonblocking with debug semaphore watching enabled.
 The unchanged-source command is a negative control: each release case must fail
 an assertion or sanitizer check, while the debug compatibility checks still pass.
 

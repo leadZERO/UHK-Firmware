@@ -39,6 +39,9 @@
 #include "peripherals/leakage_test.h"
 #include "oneshot.h"
 #include "test_suite/test_suite.h"
+#ifdef CONFIG_UHK_USB_LEFT_RELAY
+#include "usb_left_relay_uhk.h"
+#endif
 
 #ifdef __ZEPHYR__
 #include "connections.h"
@@ -2020,6 +2023,11 @@ static macro_result_t processSwitchHostCommand(parser_context_t* ctx)
 
 #undef DRY_RUN_FINISH
 
+#ifdef CONFIG_UHK_USB_LEFT_RELAY
+    if (HostRoute_Pending()) {
+        return MacroResult_Finished | MacroResult_YieldFlag;
+    }
+#endif
     return MacroResult_Finished;
 }
 

@@ -1,5 +1,9 @@
 extern "C" {
 #include "transport.h"
+#ifdef CONFIG_UHK_USB_LEFT_RELAY
+    #include "usb_left_relay_uhk.h"
+
+#endif
 #ifdef __ZEPHYR__
     #include "bt_conn.h"
     #include "connections.h"
@@ -31,6 +35,9 @@ extern "C" {
 #include "command_app.hpp"
 #include "controls_app.hpp"
 #include "keyboard_app.hpp"
+#ifdef CONFIG_UHK_USB_LEFT_RELAY
+    #include "usb_left_adapter.hpp"
+#endif
 #include "mouse_app.hpp"
 #if DEVICE_IS_UHK80_RIGHT
     #include "ble_app.hpp"
@@ -121,6 +128,11 @@ static report_sink_t determineSink()
     return ReportSink_Usb;
 #else
 
+    #ifdef CONFIG_UHK_USB_LEFT_RELAY
+    if (HostRoute_Blocked()) {
+        return ReportSink_BlackHole;
+    }
+    #endif
     connection_type_t connectionType = Connections_Type(CurrentHostConnectionId);
 
     if (!Connections_IsReady(CurrentHostConnectionId)) {
@@ -139,6 +151,10 @@ static report_sink_t determineSink()
         return ReportSink_BleHid;
     case ConnectionType_UsbHidRight:
         return ReportSink_Usb;
+    #ifdef CONFIG_UHK_USB_LEFT_RELAY
+    case ConnectionType_UsbHidLeft:
+        return ReportSink_UsbLeft;
+    #endif
     case ConnectionType_NusDongle:
         if (DEVICE_IS_UHK80_RIGHT) {
             return ReportSink_Dongle;
@@ -146,7 +162,11 @@ static report_sink_t determineSink()
     default:
         LOG_WRN("Unhandled sink type %d. Is this connection really meant to be a report target?",
             connectionType);
+        #ifdef CONFIG_UHK_USB_LEFT_RELAY
+        return ReportSink_BlackHole;
+        #else
         return ReportSink_Usb;
+        #endif
     }
 #endif
 }
@@ -176,8 +196,20 @@ static ble_session *currentHostBleSession()
 }
 #endif
 
+#if defined(CONFIG_UHK_USB_LEFT_RELAY) && DEVICE_IS_UHK80_RIGHT
+hid::session *UsbLeft_CurrentHostBleSession()
+{
+    return currentHostBleSession();
+}
+#endif
+
 extern "C" void Hid_UpdateKeyboardProtocol()
 {
+#ifdef CONFIG_UHK_USB_LEFT_RELAY
+    if (UsbLeft_QuiesceKeyboardProtocol()) {
+        return;
+    }
+#endif
 #if !DEVICE_IS_UHK80_RIGHT
     if (auto *session = keyboard_app::usb_handle().session(); session) {
         keyboard_buffer.reset_to(session->protocol(), HID_GetKeyboardRollover());
@@ -205,6 +237,23 @@ extern "C" void Hid_UpdateKeyboardProtocol()
 
 extern "C" errno_t Hid_SendKeyboardReport(const hid_keyboard_report_t *report)
 {
+#ifdef CONFIG_UHK_USB_LEFT_RELAY
+    uint32_t generation = Hid_LocalUsbGeneration();
+    if (determineSink() == ReportSink_UsbLeft) {
+        int err = UsbLeft_SendKeyboard(report);
+        if (!err) {
+            UsbScheduler_ReportAcceptedByTransport(ReportSink_UsbLeft);
+        }
+        return err;
+    }
+#endif
+
+#ifdef CONFIG_UHK_USB_LEFT_RELAY
+    if (UsbLeft_KeyboardPending()) {
+        return -EBUSY;
+    }
+    Hid_UpdateKeyboardProtocol();
+#endif
     // TODO: not needed when dongle is sink
     auto payload = keyboard_buffer.insert(*report);
 
@@ -219,7 +268,12 @@ extern "C" errno_t Hid_SendKeyboardReport(const hid_keyboard_report_t *report)
     case ReportSink_Usb:
         if (auto session = keyboard_app::usb_handle().session(); session) {
             wakeUsbHostIfNeeded();
+
+#ifdef CONFIG_UHK_USB_LEFT_RELAY
+            err = UsbLeft_QueueUsb(RelayKind_Keyboard, payload, generation, report);
+#else
             err = session->send_report(payload).to_int();
+#endif
         }
         break;
 #if DEVICE_IS_UHK80_RIGHT
@@ -229,14 +283,24 @@ extern "C" errno_t Hid_SendKeyboardReport(const hid_keyboard_report_t *report)
         if (!session) {
             break;
         }
+
+    #ifdef CONFIG_UHK_USB_LEFT_RELAY
+        err = UsbLeft_TrackedSend(RelayKind_Keyboard, session, payload, report);
+    #else
         err = session->send_report(payload).to_int();
+    #endif
         if (err == -ENOMEM) {
             // this only happens on Android with NKRO mode when the transport MTU is too small
             LOG_WRN("keyboard NKRO mode fails, falling back to 6KRO");
 
             keyboard_buffer.reset_to(hid::protocol::REPORT, rollover_t::ROLLOVER_6_KEY);
             payload = keyboard_buffer.insert(*report);
+
+    #ifdef CONFIG_UHK_USB_LEFT_RELAY
+            err = UsbLeft_TrackedSend(RelayKind_Keyboard, session, payload, report);
+    #else
             err = session->send_report(payload).to_int();
+    #endif
         }
         break;
     }
@@ -286,14 +350,30 @@ extern "C" void Hid_KeyboardReportSentCallback(report_sink_t sink)
 #endif
 }
 
-void keyboard_report_sent_callback(hid::session &session)
+void keyboard_report_sent_callback(hid::session &session, std::span<const uint8_t> data)
 {
+#ifdef CONFIG_UHK_USB_LEFT_RELAY
+    Hid_LocalUsbComplete(RelayKind_Keyboard, &session, data.data(), data.size());
+    return;
+#endif
+
     Hid_KeyboardReportSentCallback(
         session.channel() == hid::channel::USB ? ReportSink_Usb : ReportSink_BleHid);
 }
 
 extern "C" errno_t Hid_SendMouseReport(const hid_mouse_report_t *report)
 {
+#ifdef CONFIG_UHK_USB_LEFT_RELAY
+    uint32_t generation = Hid_LocalUsbGeneration();
+    if (determineSink() == ReportSink_UsbLeft) {
+        int err = UsbLeft_SendMouse(report);
+        if (!err) {
+            UsbScheduler_ReportAcceptedByTransport(ReportSink_UsbLeft);
+        }
+        return err;
+    }
+#endif
+
     // TODO: not needed when dongle is sink
     auto payload = mouse_buffer.insert(*report);
 
@@ -307,7 +387,12 @@ extern "C" errno_t Hid_SendMouseReport(const hid_mouse_report_t *report)
             if (report->buttons != 0) {
                 wakeUsbHostIfNeeded();
             }
+
+#ifdef CONFIG_UHK_USB_LEFT_RELAY
+            err = UsbLeft_QueueUsb(RelayKind_Mouse,payload,generation);
+#else
             err = session->send_report(payload).to_int();
+#endif
         }
         break;
 #if DEVICE_IS_UHK80_RIGHT
@@ -317,7 +402,12 @@ extern "C" errno_t Hid_SendMouseReport(const hid_mouse_report_t *report)
         if (!session) {
             break;
         }
+
+    #ifdef CONFIG_UHK_USB_LEFT_RELAY
+        err = UsbLeft_TrackedSend(RelayKind_Mouse, session, payload);
+    #else
         err = session->send_report(payload).to_int();
+    #endif
         break;
     }
     case ReportSink_Dongle:
@@ -347,8 +437,13 @@ extern "C" errno_t Hid_SendMouseReport(const hid_mouse_report_t *report)
     return err;
 }
 
-void mouse_report_sent_callback(hid::session &session)
+void mouse_report_sent_callback(hid::session &session, std::span<const uint8_t> data)
 {
+#ifdef CONFIG_UHK_USB_LEFT_RELAY
+    Hid_LocalUsbComplete(RelayKind_Mouse, &session, data.data(), data.size());
+    return;
+#endif
+
     if (UnreliableTransportTestMode && (Utils_Random() % 7 == 0 || Timer_GetCurrentTime() / (1024*32) == 0)) {
         return;
     }
@@ -365,6 +460,17 @@ void mouse_report_sent_callback(hid::session &session)
 
 extern "C" errno_t Hid_SendControlsReport(const hid_controls_report_t *report)
 {
+#ifdef CONFIG_UHK_USB_LEFT_RELAY
+    uint32_t generation = Hid_LocalUsbGeneration();
+    if (determineSink() == ReportSink_UsbLeft) {
+        int err = UsbLeft_SendControls(report);
+        if (!err) {
+            UsbScheduler_ReportAcceptedByTransport(ReportSink_UsbLeft);
+        }
+        return err;
+    }
+#endif
+
     // TODO: not needed when dongle is sink
     auto payload = controls_buffer.insert(*report);
 
@@ -376,7 +482,12 @@ extern "C" errno_t Hid_SendControlsReport(const hid_controls_report_t *report)
     case ReportSink_Usb:
         if (auto session = controls_app::usb_handle().session(); session) {
             wakeUsbHostIfNeeded();
+
+#ifdef CONFIG_UHK_USB_LEFT_RELAY
+            err = UsbLeft_QueueUsb(RelayKind_Controls, payload, generation);
+#else
             err = session->send_report(payload).to_int();
+#endif
         }
         break;
 #if DEVICE_IS_UHK80_RIGHT
@@ -386,7 +497,12 @@ extern "C" errno_t Hid_SendControlsReport(const hid_controls_report_t *report)
         if (!session) {
             break;
         }
+
+    #ifdef CONFIG_UHK_USB_LEFT_RELAY
+        err = UsbLeft_TrackedSend(RelayKind_Controls, session, payload);
+    #else
         err = session->send_report(payload).to_int();
+    #endif
         break;
     }
     case ReportSink_Dongle:
@@ -415,8 +531,13 @@ extern "C" errno_t Hid_SendControlsReport(const hid_controls_report_t *report)
     return err;
 }
 
-void controls_report_sent_callback(hid::session &session)
+void controls_report_sent_callback(hid::session &session, std::span<const uint8_t> data)
 {
+#ifdef CONFIG_UHK_USB_LEFT_RELAY
+    Hid_LocalUsbComplete(RelayKind_Controls, &session, data.data(), data.size());
+    return;
+#endif
+
     report_sink_t sink = session.channel() == hid::channel::USB ? ReportSink_Usb : ReportSink_BleHid;
     UsbSemaphore_Release(&UsbSemaphore.controls);
     UsbScheduler_ReportDelivered(sink);
@@ -469,8 +590,21 @@ extern "C" void Hid_UpdateKeyboardLedsState()
     keyboard_base_session *session = nullptr;
 #ifdef __ZEPHYR__
     switch (Connections_Type(CurrentHostConnectionId)) {
-    case ConnectionType_UsbHidRight:
     case ConnectionType_UsbHidLeft:
+    #ifdef CONFIG_UHK_USB_LEFT_RELAY
+        #if DEVICE_IS_UHK80_RIGHT
+    {
+        hid::app::keyboard::output_report<0> report{};
+        uint8_t leds = UsbLeft_GetState()->usb.leds;
+        report.leds.set(hid::page::leds::NUM_LOCK, leds & 1);
+        report.leds.set(hid::page::leds::CAPS_LOCK, leds & 2);
+        report.leds.set(hid::page::leds::SCROLL_LOCK, leds & 4);
+        setKeyboardLedsState(report);
+        break;
+    }
+        #endif
+    #endif
+    case ConnectionType_UsbHidRight:
         session = keyboard_app::usb_handle().session();
         break;
     #if DEVICE_IS_UHK80_RIGHT
@@ -537,8 +671,15 @@ extern "C" float VerticalScrollMultiplier(void)
     #endif
     case ConnectionType_NusDongle:
         return DongleScrollMultipliers.vertical;
-    case ConnectionType_UsbHidRight:
+    #if defined(CONFIG_UHK_USB_LEFT_RELAY) && DEVICE_IS_UHK80_RIGHT
     case ConnectionType_UsbHidLeft:
+        return (UsbLeft_GetState()->usb.flags & RelayFlag_Windows)
+                   ? mouse_app::MAX_SCROLL_RESOLUTION
+                   : UsbLeft_GetState()->usb.vertical / 256.f;
+    #else
+    case ConnectionType_UsbHidLeft:
+    #endif
+    case ConnectionType_UsbHidRight:
     default:
         break;
     }
@@ -566,8 +707,15 @@ extern "C" float HorizontalScrollMultiplier(void)
     #endif
     case ConnectionType_NusDongle:
         return DongleScrollMultipliers.horizontal;
-    case ConnectionType_UsbHidRight:
+    #if defined(CONFIG_UHK_USB_LEFT_RELAY) && DEVICE_IS_UHK80_RIGHT
     case ConnectionType_UsbHidLeft:
+        return (UsbLeft_GetState()->usb.flags & RelayFlag_Windows)
+                   ? mouse_app::MAX_SCROLL_RESOLUTION
+                   : UsbLeft_GetState()->usb.horizontal / 256.f;
+    #else
+    case ConnectionType_UsbHidLeft:
+    #endif
+    case ConnectionType_UsbHidRight:
     default:
         break;
     }

@@ -8,6 +8,9 @@
 #include "utils.h"
 #include "debug.h"
 #include "logger.h"
+#ifdef CONFIG_UHK_USB_LEFT_RELAY
+#include "usb_left_relay_uhk.h"
+#endif
 
 #ifdef __ZEPHYR__
 #include "bt_conn.h"
@@ -28,6 +31,15 @@ static uint32_t dispatchTimeMs = 0;
 static uint32_t reportIntervalForSink(report_sink_t sink)
 {
     switch (sink) {
+    case ReportSink_UsbLeft:
+#if defined(CONFIG_UHK_USB_LEFT_RELAY) && DEVICE_IS_UHK80_RIGHT
+        if (UsbLeft_LinkConnection() == ConnectionId_NusServerLeft) {
+            // A report crosses the inter-half connection, then its USB delivery
+            // acknowledgement returns over the same wireless interval.
+            return 2 * BtConn_GetReportIntervalMs(ConnectionId_NusServerLeft) + 1;
+        }
+#endif
+        return 8; // UART framing, USB polling and DONE return path.
     case ReportSink_Usb:
         return USB_REPORT_INTERVAL_MS;
     case ReportSink_BleHid:

@@ -6,6 +6,8 @@
 #include <string.h>
 
 #define MAX_LINK_PACKET_LENGTH 128
+#define MessageId_UsbLeftRelay 8
+#define K_NO_WAIT 0
 #define K_MSEC(ms) (ms)
 #define K_FOREVER UINT32_MAX
 typedef struct {
@@ -102,6 +104,20 @@ int main(void) {
     assert(lastTimeout == K_FOREVER && watchCalls == 1 && sdkCalls == 2);
     assert(permits == capacity - 1);
     puts("debug sends retain the watcher and unobserved K_FOREVER paths");
+
+#if TEST_RELAY_SEND
+    /* Relay sends stay nonblocking even when ordinary sends use the watcher. */
+    msg.messageId[0] = MessageId_UsbLeftRelay;
+    permits = 0;
+    assert(sendMessage(&msg) == -EAGAIN);
+    assert(lastTimeout == K_NO_WAIT && watchCalls == 1 && sdkCalls == 2);
+    assert(permits == 0);
+    k_sem_give(&nusBusy);
+    assert(sendMessage(&msg) == 0);
+    assert(lastTimeout == K_NO_WAIT && watchCalls == 1 && sdkCalls == 3);
+    assert(permits == 0);
+    puts("debug relay sends retain nonblocking slot ownership");
+#endif
 #elif TEST_LIFETIME
     assert(sendMessage(&msg) == 0);
     uint8_t expected[] = {20, 21, 1, 1, 1, 2, 3, 4, 5};
