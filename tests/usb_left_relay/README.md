@@ -10,6 +10,18 @@ The script compiles temporary C11 executables with warnings as errors,
 AddressSanitizer and UndefinedBehaviorSanitizer, runs them and removes them.
 It does not require Zephyr or a keyboard.
 
+The firmware version contract has a separate compiler-based check:
+
+```bash
+python3 tests/usb_left_relay/test_versions.py
+```
+
+It runs the real version generator and compiles one generated source under 36
+target/relay/zero-version combinations. Only relay-enabled UHK80 halves may use
+`UHK_USB_LEFT_RELAY_FIRMWARE_VERSION`; disabled builds, other devices and modules
+retain the ordinary version. Protocol/configuration versions and the zero-version
+checksum pass are also checked. This does not query a physical keyboard.
+
 `test_relay.c` exercises the real protocol codecs and both relay roles through
 deterministic fake UART/USB endpoints: malformed/truncated messages and codec
 fuzzing; lost reports/acks; immutable retries; deduplication of relative input;

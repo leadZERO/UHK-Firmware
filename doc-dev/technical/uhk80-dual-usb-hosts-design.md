@@ -128,9 +128,15 @@ Recheck the target Agent branch before changing these existing definitions.
   stored name for custom entries. Update macros referring to the old RAM-only
   `USB_Left_Dev` name; cycling and index bindings need no name migration.
 - Require compatible relay-enabled firmware on both UHK80 halves. The enum and
-  the baseline firmware version alone do not advertise this feature. Before
-  release, agree Agent capability/version gating and release presets; normal
-  firmware presets still disable the relay, and Agent cannot enable a build flag.
+  the baseline firmware version alone do not advertise this feature. Relay-enabled
+  halves report **18.0.65535**, defined by `UHK_USB_LEFT_RELAY_FIRMWARE_VERSION`
+  in `shared/versioning.h`; disabled builds keep `scripts/package.json`'s version.
+  Agent should require this exact provisional version on both halves through its
+  existing firmware/module version queries, independently of USB readiness.
+  Do not treat every higher version as supporting relay. When an official version
+  is assigned, update the constant and Agent's support gate together and agree
+  release presets. No new capability command or configuration version is needed.
+  Normal firmware presets still disable the relay; Agent cannot enable a build flag.
   Saving a left entry must not depend on `CONFIG_UHK_USB_LEFT_DEV_SLOT`.
 - Verify save/reload/reboot, custom names, quoted macros, cycling, full/duplicate
   slots, and disabled/older firmware behavior together in the two repositories.

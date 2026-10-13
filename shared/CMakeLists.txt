@@ -32,7 +32,10 @@ if(UHK_USE_CHECKSUMS)
     )
 endif()
 
-# track changes in the package.json file
+# Regenerate version declarations when the generator or version metadata changes.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_LIST_DIR}/../scripts/generate_versions.py"
+)
 configure_file(
     ${CMAKE_CURRENT_LIST_DIR}/../scripts/package.json
     ${CMAKE_CURRENT_BINARY_DIR}/package.json
