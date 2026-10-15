@@ -33,10 +33,10 @@ typedef struct {
     uint64_t boot, peer_boot, challenge, token, closed_token;
     uint32_t usb_generation, peer_usb_generation, selection, accepted_selection;
     uint32_t now, last_hello, last_state, last_control, last_heartbeat, last_rx;
-    uint32_t heartbeat, received_heartbeat, control_started;
+    uint32_t heartbeat, received_heartbeat, control_started, wake_epoch, wake_started;
     uint32_t received, rejected, duplicates, retries, faults;
     uint8_t hello_attempts, neutral_mask, cleanup, reason;
-    bool right, link, negotiated, wanted, active, starting, ending, quiescent, wake_sent;
+    bool right, link, negotiated, wanted, active, starting, ending, quiescent, wake_pending;
 } relay_t;
 
 void Relay_Init(relay_t *r, bool right, const relay_platform_t *platform, void *user);
@@ -45,6 +45,8 @@ void Relay_SetUsb(relay_t *r, uint32_t generation, const relay_usb_state_t *usb)
 void Relay_Tick(relay_t *r, uint32_t now);
 void Relay_Receive(relay_t *r, const uint8_t *packet, size_t length);
 void Relay_Select(relay_t *r, bool selected);
+bool Relay_CanWake(const relay_t *r);
+bool Relay_RequestWake(relay_t *r);
 bool Relay_SendReport(relay_t *r, uint8_t kind, const uint8_t *canonical);
 void Relay_UsbComplete(relay_t *r, uint8_t kind, uint64_t token, uint32_t sequence, bool success);
 bool Relay_Available(const relay_t *r);

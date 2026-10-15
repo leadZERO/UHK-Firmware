@@ -317,6 +317,14 @@ const relay_t *UsbLeft_GetState(void)
 {
     return &relay;
 }
+bool UsbLeft_RequestWake(void)
+{
+    return UsbLeft_Connected() && Relay_RequestWake(&relay);
+}
+uint32_t UsbLeft_WakeEpoch(void)
+{
+    return relay.wake_epoch;
+}
 int UsbLeft_SendKeyboard(const hid_keyboard_report_t *report)
 {
     _Static_assert(

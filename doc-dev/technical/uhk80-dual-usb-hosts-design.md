@@ -56,7 +56,7 @@ for at most 32 ms with 2 ms yields and link rechecks.
   with ATT MTU >=71. Notifications target the paired half. Selected-link reconnect
   or transport change requires fresh negotiation, drain and neutral delivery.
   Changes to unused BLE do not invalidate a healthy bridge route.
-- Protocol version 1/schema `0x01DD041D` uses explicit byte codecs and a 64-byte
+- Protocol version 1/schema `0x01DD041E` uses explicit byte codecs and a 64-byte
   relay packet bound. Canonical keyboard/mouse/controls sizes are 29/11/10 bytes.
   Left performs HID encoding for its local USB protocol and rollover.
 - Peer identity, USB generation, selection and session token reject old traffic.
@@ -89,6 +89,18 @@ Missing or stale peer and unconfigured USB are unavailable; configured+suspended
 is sleeping; negotiated configured+awake is ready. Ready is separate from active.
 Host feedback applies only to the selected route. Resume needs fresh setup.
 An awake selected wireless left host requests 7.5 ms/zero skipped events.
+
+Retained selection and background traffic never request remote wake. A fresh
+physical key/modifier/button action on the selected sleeping host, or an explicit
+host selection, may request wake when USB permits it. Held, postponed pre-sleep
+and synthetic input, pointer motion, and macro-generated reports do not. Input
+freshness is observed before the blocked-route sender discards reports. Intent
+expires after 128 ms, gets one send attempt, and is invalidated by route, peer,
+link, USB-generation or sleep/permission changes. Resume still requires neutral
+delivery and a fresh session. `Wake.selection` carries the USB state revision;
+the receiver consumes it to reject delayed or duplicate wakes. This schema change
+requires updating both halves together; older peers fail negotiation. See the
+[wake regression and policy details](../../tests/usb_left_relay/README.md#wake-policy-and-paired-update-contract).
 
 `CONFIG_UHK_USB_LEFT_RELAY` defaults off. Experimental presets enable both halves;
 `CONFIG_UHK_USB_LEFT_DEV_SLOT` on right adds `USB Left` in an empty regular

@@ -18,6 +18,8 @@ bool UsbLeft_Active(void);
 bool UsbLeft_Quiescent(void);
 bool UsbLeft_Pending(void);
 void UsbLeft_Select(bool selected);
+bool UsbLeft_RequestWake(void);
+uint32_t UsbLeft_WakeEpoch(void);
 const relay_t *UsbLeft_GetState(void);
 int UsbLeft_SendKeyboard(const hid_keyboard_report_t *report);
 int UsbLeft_SendMouse(const hid_mouse_report_t *report);
@@ -51,6 +53,8 @@ bool Hid_LocalUsbWakeAllowed(void);
 
 /* Coordinator APIs are implemented in host_route.c on the master. */
 bool HostRoute_Request(uint8_t host, bool explicitSelection);
+bool HostRoute_CanWake(void);
+void HostRoute_RequestWake(void);
 void HostRoute_Process(void);
 void HostRoute_LocalUsbChanged(void);
 bool HostRoute_Blocked(void);
