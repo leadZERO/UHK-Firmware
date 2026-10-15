@@ -67,6 +67,11 @@ static void clearPending(relay_t *r)
         r->slots[i].submitted = false;
     }
 }
+static void invalidateWake(relay_t *r)
+{
+    r->wake_pending = false;
+    ++r->wake_epoch;
+}
 static void leftCleanup(relay_t *r, uint8_t cleanup, uint8_t reason)
 {
     r->active = false;
@@ -118,7 +123,7 @@ void Relay_SetLink(relay_t *r, bool up)
     r->negotiated = false;
     r->hello_attempts = 0;
     r->last_hello = r->now;
-    r->wake_sent = false;
+    invalidateWake(r);
     if (r->right) {
         rightClose(r, r->token ? RelayStatus_Unavailable : 0);
     } else {
@@ -172,10 +177,28 @@ void Relay_Select(relay_t *r, bool selected)
     r->wanted = selected;
     if (selected)
         r->reason = 0;
-    r->wake_sent = false;
+    invalidateWake(r);
     if (!selected)
         rightClose(r, 0);
     changed(r);
+}
+
+bool Relay_CanWake(const relay_t *r)
+{
+    return r->right && r->wanted && Relay_Available(r) &&
+           (r->usb.flags & (RelayFlag_Suspended | RelayFlag_Wakeup)) ==
+               (RelayFlag_Suspended | RelayFlag_Wakeup);
+}
+
+bool Relay_RequestWake(relay_t *r)
+{
+    /* Selection is persistent. Only a fresh user action can create this intent,
+     * and input observed before suspend must never be saved for the next sleep. */
+    if (!Relay_CanWake(r))
+        return false;
+    r->wake_pending = true;
+    r->wake_started = r->now;
+    return true;
 }
 
 static void transmitReport(relay_t *r, uint8_t kind, relay_report_slot_t *slot)
@@ -323,9 +346,15 @@ static void receiveLeft(relay_t *r, const relay_message_t *m)
         stateMessage(r, RelayOp_State);
         return;
     case RelayOp_Wake:
-        if (!peerMatches(r, m))
+        /* Wake uses the existing selection field as a state-revision fence.
+         * USB generation alone survives suspend/resume; an old queued wake must
+         * not wake a later sleep. Consuming the revision also rejects duplicates. */
+        if (!peerMatches(r, m) || m->selection != r->usb.revision ||
+            (r->usb.flags & (RelayFlag_Configured | RelayFlag_Suspended | RelayFlag_Wakeup)) !=
+                (RelayFlag_Configured | RelayFlag_Suspended | RelayFlag_Wakeup))
             break;
-        if ((r->usb.flags & RelayFlag_Wakeup) && r->platform.wake)
+        ++r->usb.revision;
+        if (r->platform.wake)
             r->platform.wake(r->user);
         stateMessage(r, RelayOp_State);
         return;
@@ -348,6 +377,11 @@ static void receiveRight(relay_t *r, const relay_message_t *m)
                 (m->usb_generation == r->peer_usb_generation &&
                     (int32_t)(m->state.revision - r->usb.revision) < 0)))
             break;
+        if (!r->negotiated || r->peer_boot != m->left_boot || r->challenge != m->challenge ||
+            r->peer_usb_generation != m->usb_generation ||
+            ((r->usb.flags ^ m->state.flags) &
+                (RelayFlag_Configured | RelayFlag_Suspended | RelayFlag_Wakeup)))
+            invalidateWake(r);
         if (r->peer_boot != m->left_boot) {
             /* A different boot nonce proves the previous MCU session ended. */
             r->active = r->starting = r->ending = false;
@@ -379,8 +413,10 @@ static void receiveRight(relay_t *r, const relay_message_t *m)
                  * Retain the old token until the left proves its transfers drained. */
             rightClose(r, RelayStatus_Unavailable);
         }
-        if ((r->usb.flags & RelayFlag_Suspended) != (m->state.flags & RelayFlag_Suspended))
-            r->wake_sent = false;
+        if (m->usb_generation != r->peer_usb_generation ||
+            ((r->usb.flags ^ m->state.flags) &
+                (RelayFlag_Configured | RelayFlag_Suspended | RelayFlag_Wakeup)))
+            invalidateWake(r);
         r->peer_usb_generation = m->usb_generation;
         r->usb = m->state;
         r->last_rx = r->now;
@@ -561,6 +597,11 @@ static void tickLeft(relay_t *r)
 
 static void tickRight(relay_t *r)
 {
+    /* One bounded opportunity per action. Busy cleanup/transport must not keep
+     * an old key press armed indefinitely or automatically retry a sent wake. */
+    if (r->wake_pending &&
+        (!Relay_CanWake(r) || elapsed(r->now, r->wake_started, RELAY_REPORT_DEADLINE_MS)))
+        invalidateWake(r);
     if (!r->link) {
         if (r->ending && elapsed(r->now, r->control_started, RELAY_LEASE_MS + 300) && !r->reason) {
             r->reason = RelayStatus_Unavailable;
@@ -575,6 +616,7 @@ static void tickRight(relay_t *r)
         /* A peer can reboot while UART's ready flag survives. Restart one
          * bounded handshake rather than retry an unknown END token forever. */
         r->negotiated = false;
+        invalidateWake(r);
         r->hello_attempts = 0;
         r->last_hello = r->now;
     }
@@ -637,15 +679,15 @@ static void tickRight(relay_t *r)
     }
     if (!r->active && r->wanted && Relay_Available(r)) {
         if (!Relay_Awake(r)) {
-            if (!r->wake_sent && (r->usb.flags & RelayFlag_Wakeup)) {
+            if (r->wake_pending && (r->usb.flags & RelayFlag_Wakeup)) {
                 relay_message_t m = {.op = RelayOp_Wake,
                     .right_boot = r->boot,
                     .left_boot = r->peer_boot,
                     .challenge = r->challenge,
                     .usb_generation = r->peer_usb_generation,
-                    .selection = r->selection};
-                if (sendMessage(r, &m))
-                    r->wake_sent = true;
+                    .selection = r->usb.revision};
+                r->wake_pending = false;
+                sendMessage(r, &m);
             }
             return;
         }

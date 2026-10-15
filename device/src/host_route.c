@@ -81,6 +81,12 @@ void HostRoute_Process(void)
             phase = 4;
             return;
         }
+        if (isLeft(target)) {
+            UsbLeft_Select(true);
+            if (explicitSelection) {
+                UsbLeft_RequestWake();
+            }
+        }
         phase = 3;
     }
     if (phase == 3) {
@@ -99,6 +105,17 @@ void HostRoute_Process(void)
     }
     if (!phase && isLeft(CurrentHostConnectionId)) {
         UsbLeft_Select(true);
+    }
+}
+bool HostRoute_CanWake(void)
+{
+    return !phase && isLeft(CurrentHostConnectionId) && UsbLeft_Connected() &&
+           Relay_CanWake(UsbLeft_GetState());
+}
+void HostRoute_RequestWake(void)
+{
+    if (HostRoute_CanWake()) {
+        UsbLeft_RequestWake();
     }
 }
 void HostRoute_LocalUsbChanged(void)
@@ -214,6 +231,8 @@ bool HostRoute_Request(uint8_t host, bool explicitPick)
     return false;
 }
 void HostRoute_Process(void) {}
+bool HostRoute_CanWake(void) { return false; }
+void HostRoute_RequestWake(void) {}
 void HostRoute_LocalUsbChanged(void) {}
 bool HostRoute_Blocked(void)
 {

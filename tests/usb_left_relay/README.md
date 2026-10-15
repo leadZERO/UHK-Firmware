@@ -10,6 +10,71 @@ The script compiles temporary C11 executables with warnings as errors,
 AddressSanitizer and UndefinedBehaviorSanitizer, runs them and removes them.
 It does not require Zephyr or a keyboard.
 
+The wake regressions are part of `run.sh`. `test_wake.c` uses the actual
+protocol and both relay roles, with mocked inter-half delivery and USB hooks.
+It checks selected/armed idle suspension for 15 seconds, outstanding transfers
+and delayed drains, passive renegotiation, one request per fresh intent, a new
+request after failed wake, rejected/expired sends, ordinary cleanup revisions,
+neutral-first resume, three sleep cycles, stale boot/challenge/USB generation,
+permission changes, duplicate packets and rapid suspend/resume/suspend before
+a new relay session begins. Old-schema peers are rejected.
+
+`test_wake_input.c` compiles the actual report-sender entry point, active-report
+updater, action-state updater, debounce/commit functions, action dispatcher,
+held-source capture and wake helpers, together with the real route coordinator.
+The test mocks scheduler/power, postponer queuing/replay, report construction and
+the USB adapter; it does not replace the blocked-route branch or wake decisions.
+It checks keyboard/media/modifier and mouse-button actions on all four physical
+source slots, releases/held input, quarantine, postponed input from before
+suspend, link/session invalidation, synthetic pointer keys, motion/scroll,
+neutral input, unselected/unarmed hosts, pairing/lock/test/suppression modes,
+explicit selection/reselection, held connection actions and a switch away later
+in the same input pass. Input still runs while normal reports are discarded.
+The coordinator test also verifies automatic selection/config replacement and
+retained sleeping selection remain quiet. The integration harness disables only
+unused-parameter warnings for extracted production callbacks and platform mocks;
+all other warnings remain errors, with ASan/UBSan enabled.
+
+Run the negative controls against the original implementation on Linux/WSL:
+
+```bash
+python3 tests/usb_left_relay/run_wake_baseline.py 82b2a7167
+```
+
+The runner extracts only the four unchanged relay/protocol sources into a
+temporary directory. Both regressions must reach their assertion failure:
+`idle suspend: wake_calls=1` and `rapid sleep replay: extra_wake_calls=1`.
+The fixed suite requires zero in both cases. This establishes that the tests
+detect the original idle-wake bug and the need for a sleep-cycle packet fence;
+it does not establish physical Windows timing.
+
+## Wake policy and paired-update contract
+
+Retaining USB Left selection never requests wake. A fresh debounced physical
+key whose resolved action emits keyboard/media/system/modifier input or a mouse
+button may queue one wake while that selected host is suspended and authorized
+for remote wake. The updater records source freshness before postponement,
+consumes it when the action activates, and rejects old/held/synthetic sources.
+Mouse motion/scroll, report retries, neutral cleanup, macro-generated reports,
+and layer-only actions do not create input wake intent. Explicit host selection
+also requests wake, including reselecting the sleeping current host. Automatic
+selection/config reload does not. Held connection actions honor quarantine.
+
+Wake intent is invalidated on deselection, permission/configuration/suspend
+transitions, USB generation or peer/link replacement, and peer staleness.
+It expires after 128 ms while waiting for cleanup; each accepted input gives
+one send attempt, so a new press/selection can retry without background wake
+retries. An already transmitted packet has the USB state revision in its existing
+`selection` field. The left rejects it after the state changes, and advances the
+revision when accepting it to reject duplicates. Boot/challenge/generation alone
+cannot distinguish rapid sleep cycles before a new BEGIN completes.
+
+The revised meaning of `Wake.selection` changes the schema from `0x01DD041D`
+to `0x01DD041E`. **Update both halves together.** Older peers intentionally fail
+negotiation; packet sizes and the user-configuration format are unchanged.
+The same transport-independent relay applies over the UART bridge and BLE.
+Physical sleep/wake acceptance on both links remains required.
+
 The firmware version contract has a separate compiler-based check:
 
 ```bash

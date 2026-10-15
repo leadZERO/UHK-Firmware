@@ -49,6 +49,13 @@ static uint32_t clockMs, commits, resets;
 static uint32_t usbGeneration, observedLocalUsbGeneration, quiesceCalls, usbNeutralCalls;
 static uint8_t lastCommitted;
 static bool lastExplicit;
+static bool wakeArmed;
+static bool wakeQueued;
+static unsigned wakeRequests;
+static uint32_t wakeEpochValue;
+#ifdef WAKE_INPUT_TEST
+static void resetWakeInput(bool suppressHeld);
+#endif
 uint8_t Connections_Type(uint8_t host)
 {
     assert(host > 0 && host <= 24);
@@ -93,8 +100,25 @@ bool UsbLeft_Initialized(void)
 }
 void UsbLeft_Select(bool selected)
 {
+    if (wanted != selected) { ++wakeEpochValue; }
+    if (!selected) { wakeQueued = false; }
     wanted = selected;
 }
+/* Adapter boundary: the separate relay test exercises real peer/USB guards. */
+const void *UsbLeft_GetState(void) { return NULL; }
+bool Relay_CanWake(const void *state)
+{
+    (void)state;
+    return wanted && available && !awake && wakeArmed;
+}
+bool UsbLeft_RequestWake(void)
+{
+    if (!Relay_CanWake(NULL)) { return false; }
+    ++wakeRequests;
+    wakeQueued = true;
+    return true;
+}
+uint32_t UsbLeft_WakeEpoch(void) { return wakeEpochValue; }
 bool Hid_LocalUsbQuiesce(void)
 {
     ++quiesceCalls;
@@ -117,6 +141,9 @@ uint32_t Hid_LocalUsbGeneration(void)
 void Hid_BeginNeutralization(void) {}
 void UsbReportUpdater_ResetHostInput(bool suppressHeld)
 {
+#ifdef WAKE_INPUT_TEST
+    resetWakeInput(suppressHeld);
+#endif
     ++resets;
     if (suppressHeld)
         for (uint8_t i = 0; i < 2; ++i)
@@ -150,6 +177,9 @@ static void resetPlatform(void)
     oldLeftSlots = 0;
     routeGeneration = 0;
     usbGeneration = observedLocalUsbGeneration = quiesceCalls = usbNeutralCalls = 0;
+    wakeArmed = true;
+    wakeQueued = false;
+    wakeRequests = wakeEpochValue = 0;
 }
 
 /* Exercise the actual switchHost command and route coordinator. Only argument
@@ -383,6 +413,51 @@ static void configReplacementIsBarrier(void)
     assert(CurrentHostConnectionId == 1 && commits == 1 && Connections[2].state == 0 &&
            !HostRoute_Blocked());
 }
+static void explicitWakeSelection(void)
+{
+    resetPlatform();
+    awake = false;
+    assert(HostRoute_Request(2, true));
+    HostRoute_Process();
+    assert(wakeRequests == 1 && CurrentHostConnectionId == 2 && HostRoute_Blocked());
+    for (unsigned i = 0; i < 100; ++i) { HostRoute_Process(); }
+    assert(wakeRequests == 1); // Persistent selection is not new intent.
+    assert(HostRoute_Request(2, true)); // Deliberate sleeping-host reselection.
+    HostRoute_Process();
+    assert(wakeRequests == 2);
+
+    resetPlatform();
+    awake = false;
+    assert(HostRoute_Request(2, false));
+    HostRoute_Process();
+    assert(!wakeRequests);
+    assert(HostRoute_PrepareConfig() == false);
+    HostRoute_Process();
+    assert(HostRoute_PrepareConfig());
+    HostRoute_ConfigChanged();
+    HostRoute_Process();
+    assert(!wakeRequests);
+
+    resetPlatform();
+    awake = false;
+    assert(HostRoute_Request(2, true));
+    assert(HostRoute_Request(1, true));
+    HostRoute_Process();
+    assert(!wakeRequests); // Latest selection wins before old intent exists.
+
+    resetPlatform();
+    CurrentHostConnectionId = 2;
+    active = wanted = wasActive = true;
+    HostRoute_Process();
+    active = awake = false;
+    HostRoute_Process();
+    assert(wanted && HostRoute_Blocked() && !wakeRequests);
+    HostRoute_RequestWake();
+    assert(wakeRequests == 1);
+    wakeArmed = false;
+    HostRoute_RequestWake();
+    assert(wakeRequests == 1);
+}
 int main(void)
 {
     resetPlatform();
@@ -399,5 +474,7 @@ int main(void)
     configReplacementIsBarrier();
     usbReconnectMustDeliverAllUp();
     switchMacroYieldsOnlyForPendingRoute();
+    explicitWakeSelection();
     puts("host route tests passed");
+    return 0;
 }

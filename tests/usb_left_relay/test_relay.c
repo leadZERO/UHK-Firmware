@@ -18,6 +18,8 @@ struct fake {
         bool pending;
     } usb[3];
     unsigned submissions[3], delivered[3], drop_done, drop_report, drop_begin, drop_ended;
+    unsigned wake_calls, wake_packets;
+    bool reject_wake;
     bool block_usb, fail_usb, block_drain;
 };
 static uint64_t randomNonce(void *user)
@@ -30,7 +32,7 @@ static void dirty(void *user)
 }
 static bool wake(void *user)
 {
-    (void)user;
+    ++((fake_t *)user)->wake_calls;
     return true;
 }
 static void delivered(void *user, uint8_t kind)
@@ -40,6 +42,10 @@ static void delivered(void *user, uint8_t kind)
 static bool sendPacket(void *user, const uint8_t *packet, size_t length)
 {
     fake_t *f = user;
+    if (packet[1] == RelayOp_Wake) {
+        ++f->wake_packets;
+        if (f->reject_wake) { return false; }
+    }
     if (packet[1] == RelayOp_Ended && f->drop_ended) {
         --f->drop_ended;
         return true;
@@ -518,4 +524,5 @@ int main(void)
     lostBeginCanBeClosed();
     sleepingCloseKeepsTombstone();
     printf("relay tests passed (context %zu bytes)\n", sizeof(relay_t));
+    return 0;
 }

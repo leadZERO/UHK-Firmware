@@ -5,7 +5,9 @@
 #include <stdint.h>
 
 #define USB_LEFT_RELAY_VERSION 1
-#define USB_LEFT_RELAY_SCHEMA 0x01DD041Du
+/* Wake.selection is the USB state revision, rather than an unused field.
+ * Both halves must agree: older automatic-wake peers must not negotiate. */
+#define USB_LEFT_RELAY_SCHEMA 0x01DD041Eu
 #define USB_LEFT_RELAY_MAX_PACKET 64
 #define USB_LEFT_RELAY_KEYBOARD_SIZE 29
 #define USB_LEFT_RELAY_MOUSE_SIZE 11

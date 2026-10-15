@@ -125,8 +125,11 @@ hid_mouse_report_t * ActiveMouseReport = &mouseReports[0];
 #ifdef CONFIG_UHK_USB_LEFT_RELAY
 extern uint8_t StickyModifiers, StickyModifiersNegative;
 static uint8_t suppressedSources[(SLOT_COUNT*MAX_KEY_COUNT_PER_MODULE+7)/8];
+static uint8_t wakeSources[(SLOT_COUNT*MAX_KEY_COUNT_PER_MODULE+7)/8];
+static uint32_t wakeEpoch;
 void UsbReportUpdater_ResetHostInput(bool suppressHeld) {
     if (suppressHeld) {
+        memset(wakeSources, 0, sizeof(wakeSources));
         for (uint8_t slot=0;slot<SLOT_COUNT;++slot) {
             for (uint8_t key=0;key<MAX_KEY_COUNT_PER_MODULE;++key) {
                 key_state_t *state=&KeyStates[slot][key];
@@ -165,6 +168,57 @@ static bool suppressedSource(key_state_t *state) {
     if (address<start || address>=start+sizeof(KeyStates)) { return false; }
     size_t index=(address-start)/sizeof(key_state_t);
     return HostInputGate_Suppressed(suppressedSources,index,!state->hardwareSwitchState && !state->current);
+}
+
+static bool wakeSourceIndex(key_state_t *state, size_t *index)
+{
+    uint32_t epoch = UsbLeft_WakeEpoch();
+    if (epoch != wakeEpoch) {
+        memset(wakeSources, 0, sizeof(wakeSources));
+        wakeEpoch = epoch;
+    }
+    uintptr_t address = (uintptr_t)state, start = (uintptr_t)&KeyStates[0][0];
+    if (address < start || address >= start + sizeof(KeyStates)) { return false; }
+    *index = (address - start) / sizeof(key_state_t);
+    return true;
+}
+
+static void observeWakePress(key_state_t *state, bool active)
+{
+    size_t index;
+    if (!wakeSourceIndex(state, &index)) { return; }
+    /* Observe the debounced physical edge before postponement. Replaying an
+     * action, synthetic pointer keys, or a press captured awake is not intent. */
+    HostInputGate_Suppressed(wakeSources, index, true);
+    if (active && state->hardwareSwitchState && !suppressedSource(state) && HostRoute_CanWake()) {
+        HostInputGate_Capture(wakeSources, index, true);
+    }
+}
+
+static void requestWakeOnAction(key_state_t *state, const key_action_t *action)
+{
+    size_t index;
+    if (!KeyState_ActivatedNow(state) || !wakeSourceIndex(state, &index) ||
+        !HostInputGate_Suppressed(wakeSources, index, false)) { return; }
+    HostInputGate_Suppressed(wakeSources, index, true);
+    if (!state->hardwareSwitchState || suppressedSource(state)) { return; }
+    if (CurrentPowerMode >= PowerMode_Lock) { return; }
+#if __ZEPHYR__
+    if (InteractivePairingInProgress) { return; }
+#endif
+    bool key = action->type == KeyActionType_Keystroke &&
+        ((!SuppressKeys && action->keystroke.scancode) ||
+         (!SuppressMods && (action->keystroke.modifiers ||
+                           IS_SECONDARY_ROLE_MODIFIER(action->keystroke.secondaryRole))));
+    bool button = action->type == KeyActionType_Mouse &&
+        (action->mouseAction <= SerializedMouseAction_RightClick ||
+         (action->mouseAction >= SerializedMouseAction_Button_4 &&
+          action->mouseAction <= SerializedMouseAction_Button_Last));
+    if (key || button) {
+        /* Queued, not transmitted here: a selection action later in this input
+         * pass can invalidate the old host's request before the relay runs. */
+        HostRoute_RequestWake();
+    }
 }
 #endif
 
@@ -558,8 +612,10 @@ void ApplyKeyAction(key_state_t *keyState, key_action_cached_t *cachedAction, ke
     key_action_t* action = &cachedAction->action;
 
 #ifdef CONFIG_UHK_USB_LEFT_RELAY
+    requestWakeOnAction(keyState, action);
     if (suppressedSource(keyState) && (action->type==KeyActionType_Mouse ||
-        action->type==KeyActionType_PlayMacro || action->type==KeyActionType_InlineMacro)) { return; }
+        action->type==KeyActionType_PlayMacro || action->type==KeyActionType_InlineMacro ||
+        action->type==KeyActionType_Connections)) { return; }
 #endif
     switch (action->type) {
         case KeyActionType_Keystroke:
@@ -694,6 +750,10 @@ static void commitKeyState(key_state_t *keyState, bool active, uint8_t pressTime
         Ledmap_ActivateTestled(key.slotId, key.inSlotId);
         return;
     }
+
+#ifdef CONFIG_UHK_USB_LEFT_RELAY
+    observeWakePress(keyState, active);
+#endif
 
     if (PostponerCore_EventsShouldBeQueued() || forcePostponer) {
         PostponerCore_TrackKeyEvent(keyState, active, 255);

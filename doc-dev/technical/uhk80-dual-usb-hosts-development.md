@@ -5,7 +5,30 @@ preferred and paired inter-half BLE fallback. Both halves need compatible relay
 firmware. See the [implementation contract](uhk80-dual-usb-hosts-design.md) and
 [scope and acceptance](uhk80-dual-usb-hosts-prd.md).
 
-**Current candidate, 2026-10-12:** both halves were built and flashed from
+**Current candidate, 2026-10-15:** both halves were built and flashed from
+`82b2a7167` plus the local remote-wake correction. Retained USB Left selection
+no longer wakes a suspended host; fresh physical key/button actions or explicit
+selection can request wake. Schema `0x01DD041E` requires this paired update.
+Both halves report `18.0.65535`, with relay enabled and the development slot off.
+All seven relay scripts and 36 compiled version cases passed. Both relay-enabled
+and ordinary configurations for each half built and passed signature validation.
+All 662 normalized production files matched the reviewed build snapshot. The
+unchanged-source negative controls reproduced idle wake and delayed wake into a
+later sleep; the corrected tests produced zero unintended wakes in both cases.
+
+After deployment, USB Left negotiated over the bridge with no pending transfers,
+blocked route or relay faults, and both saved configuration files were unchanged.
+The user then disconnected only right USB, kept left USB and the bridge attached,
+and tested Windows sleep: it stayed asleep until a deliberate UHK key press, then
+woke with normal typing and release. Windows recorded sleep from 08:12:27 to
+08:14:29 MDT on October 15 (about 122 seconds); `powercfg /lastwake` identified
+the UHK left USB device (`VID_37A8&PID_0007`). This is one successful wired cycle;
+repeated/overnight sleep and Bluetooth fallback wake remain untested on hardware.
+The local ignored `build/local-uhk80/wake-fix-20261015/` directory retains images,
+matching ELFs/configurations, source manifests, regression/negative-control logs,
+upload logs, Windows wake evidence, configuration backups and rollback images.
+
+**Earlier candidate, 2026-10-12:** both halves were built and flashed from
 `19b8a2483` plus the provisional-version changes described below. Both report
 `18.0.65535`, with relay enabled and the RAM-only development slot disabled.
 All 719 normalized files in the deployed source manifest matched the checkout
