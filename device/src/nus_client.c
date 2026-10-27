@@ -189,7 +189,20 @@ int NusClient_SendMessage(message_t* msg) {
         return -1;
     }
 
-    SEM_TAKE(&nusBusy);
+    bool relayMessage = msg->idsUsed && msg->messageId[0] == MessageId_UsbLeftRelay;
+#if DEBUG_SEMAPHORES
+    if (relayMessage) {
+        err = k_sem_take(&nusBusy, K_NO_WAIT);
+    } else {
+        SEM_TAKE(&nusBusy);
+    }
+#else
+    err = k_sem_take(&nusBusy, relayMessage ? K_NO_WAIT : K_MSEC(256));
+#endif
+    if (err) {
+        Trace_Printc("r2");
+        return err;
+    }
 
     // From here on every exit path must release the semaphore: send_raw_buffer
     // gives it back on error, and the `sent` callback gives it back on success.
@@ -197,7 +210,9 @@ int NusClient_SendMessage(message_t* msg) {
     // Call this only after we have taken the semaphore.
     Messenger_UpdateWatermarks(msg);
 
-    uint8_t buffer[MAX_LINK_PACKET_LENGTH];
+    // bt_nus_client_send retains this buffer until the sent callback. The
+    // single nusBusy slot prevents another sender from overwriting it.
+    static uint8_t buffer[MAX_LINK_PACKET_LENGTH];
     uint8_t bufferIdx = 0;
 
     buffer[bufferIdx++] = msg->src;

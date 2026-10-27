@@ -53,6 +53,7 @@
         EventSchedulerEvent_ConnectionsUpdateState,
         EventSchedulerEvent_RollTargetEllipsis,
         EventSchedulerEvent_CheckConnectionSecurity,
+        EventSchedulerEvent_UsbLeftRelay,
         EventSchedulerEvent_LockHintsLeftHalf,
         EventSchedulerEvent_NotificationForceAwakeEnd,
         EventSchedulerEvent_Count

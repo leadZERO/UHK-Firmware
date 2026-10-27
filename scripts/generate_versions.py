@@ -17,10 +17,19 @@ def generate_versions(package_json, git_info, use_zero_versions):
             'tag': ''
         }
 
-    version_variables = '\n'.join([
-        f"const version_t {prefix}Version = {{ {', '.join(['0' if use_zero_versions else package_json[f'{prefix}Version'].split('.')[i] for i in range(len(patch_versions))])} }};"
-        for prefix in version_property_prefixes
-    ])
+    version_variables = []
+    for prefix in version_property_prefixes:
+        parts = ['0'] * len(patch_versions) if use_zero_versions else package_json[f'{prefix}Version'].split('.')
+        declaration = f"const version_t {prefix}Version = {{ {', '.join(parts)} }};"
+        if prefix == 'firmware' and not use_zero_versions:
+            # Select per target, not per generation: versions.c is shared by builds.
+            declaration = f"""#if defined(CONFIG_UHK_USB_LEFT_RELAY) && CONFIG_UHK_USB_LEFT_RELAY && defined(DEVICE_IS_UHK80) && DEVICE_IS_UHK80
+const version_t firmwareVersion = UHK_USB_LEFT_RELAY_FIRMWARE_VERSION;
+#else
+{declaration}
+#endif"""
+        version_variables.append(declaration)
+    version_variables = '\n'.join(version_variables)
     device_md5_sums = '\n'.join([
         f'    [{device["deviceId"]}] = "{ZERO_MD5}",'
         for device in package_json['devices']

@@ -107,7 +107,19 @@ int NusServer_SendMessageTo(message_t* msg, struct bt_conn* conn) {
     }
 
     Trace_Printc("c1");
-    SEM_TAKE(&nusBusy);
+    bool relayMessage = msg->idsUsed && msg->messageId[0] == MessageId_UsbLeftRelay;
+#if DEBUG_SEMAPHORES
+    if (relayMessage) {
+        err = k_sem_take(&nusBusy, K_NO_WAIT);
+    } else {
+        SEM_TAKE(&nusBusy);
+    }
+#else
+    err = k_sem_take(&nusBusy, relayMessage ? K_NO_WAIT : K_MSEC(256));
+#endif
+    if (err) {
+        return err;
+    }
     Trace_Printc("c2");
 
     // From here on every exit path must release the semaphore: send_raw_buffer

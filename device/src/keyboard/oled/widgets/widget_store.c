@@ -113,7 +113,9 @@ static string_segment_t getSlotText(uint8_t connId, bool empty) {
 static string_segment_t getTargetText_(uint8_t connId) {
     switch (connId) {
         case ConnectionId_UsbHidRight:
-            return (string_segment_t){ .start = "USB Cable", .end = NULL };
+            return (string_segment_t){ .start = "USB Right", .end = NULL };
+        case ConnectionId_UsbHidLeft:
+            return (string_segment_t){ .start = "USB Left", .end = NULL };
         case ConnectionId_BtHid:
             return (string_segment_t){ .start = "Bluetooth", .end = NULL };
         case ConnectionId_HostConnectionFirst ... ConnectionId_HostConnectionLast: {
@@ -136,9 +138,9 @@ static string_segment_t getTargetText_(uint8_t connId) {
                 case HostConnectionType_Empty:
                     return getSlotText(connId, true);
                 case HostConnectionType_UsbHidRight:
-                    return (string_segment_t){ .start = "USB Cable", .end = NULL };
+                    return (string_segment_t){ .start = "USB Right", .end = NULL };
                 case HostConnectionType_UsbHidLeft:
-                    return (string_segment_t){ .start = "USB Cable", .end = NULL };
+                    return (string_segment_t){ .start = "USB Left", .end = NULL };
                 case HostConnectionType_BtHid:
                     return (string_segment_t){ .start = "Bluetooth", .end = NULL };
                 case HostConnectionType_Dongle:
