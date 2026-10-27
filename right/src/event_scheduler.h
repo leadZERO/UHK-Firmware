@@ -54,6 +54,8 @@
         EventSchedulerEvent_RollTargetEllipsis,
         EventSchedulerEvent_CheckConnectionSecurity,
         EventSchedulerEvent_UsbLeftRelay,
+        EventSchedulerEvent_LockHintsLeftHalf,
+        EventSchedulerEvent_NotificationForceAwakeEnd,
         EventSchedulerEvent_Count
     } event_scheduler_event_t;
 

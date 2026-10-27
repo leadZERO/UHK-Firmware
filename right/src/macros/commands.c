@@ -1887,7 +1887,6 @@ static macro_result_t processProgressHueCommand()
     }
 
     Ledmap_SetLedBacklightingMode(BacklightingMode_ConstantRGB);
-    EventVector_Set(EventVector_LedMapUpdateNeeded);
     return MacroResult_Finished;
 #undef C
 }
@@ -1908,7 +1907,7 @@ static macro_result_t processResetConfigurationCommand(parser_context_t* ctx)
         return MacroResult_Finished;
     }
 
-    ConfigManager_ResetConfiguration(true, true);
+    ConfigManager_ResetConfiguration(true, true, true);
     return MacroResult_Finished;
 }
 

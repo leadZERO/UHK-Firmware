@@ -70,3 +70,4 @@ done
   "$repo_root/tests/usb_left_relay/test_wake_input.c" -o "$test_dir/test-wake-input"
 "$test_dir/test-wake-input"
 bash "$repo_root/tests/usb_left_relay/run_relay_completion.sh"
+bash "$repo_root/tests/usb_left_relay/run_transport_wake.sh"

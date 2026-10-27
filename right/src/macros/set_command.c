@@ -283,6 +283,20 @@ static macro_variable_t module(parser_context_t* ctx, set_command_action_t actio
         DEFINE_INT_LIMITS(0, 65535);
         ASSIGN_INT(Cfg.HoldContinuationTimeout);
     }
+    else if (ConsumeToken(ctx, "dragStyle") && moduleId == ModuleId_TouchpadRight) {
+        DEFINE_NONE_LIMITS();
+        ASSIGN_CUSTOM(int32_t, intVar, Cfg.TouchpadDragStyle, ConsumeTouchpadDragStyle(ctx));
+    }
+    else if (ConsumeToken(ctx, "doubleTapAndHold") && moduleId == ModuleId_TouchpadRight) {
+        ConsumeUntilDot(ctx);
+        if (ConsumeToken(ctx, "timeout")) {
+            DEFINE_INT_LIMITS(0, 65535);
+            ASSIGN_INT(Cfg.TouchpadDoubleTapAndHoldTimeout);
+        }
+        else {
+            Macros_ReportErrorTok(ctx, "Parameter not recognized:");
+        }
+    }
     else {
         return moduleSpeed(ctx, action, module, moduleId);
     }
@@ -527,7 +541,6 @@ static macro_variable_t backlightStrategy(parser_context_t* ctx, set_command_act
     }
 
     Ledmap_SetLedBacklightingMode(res);
-    EventVector_Set(EventVector_LedMapUpdateNeeded);
     return noneVar();
 }
 
@@ -596,7 +609,6 @@ static macro_variable_t constantRgb(parser_context_t* ctx, set_command_action_t 
 
         Cfg.LedMap_ConstantRGB = rgb;
         Ledmap_SetLedBacklightingMode(BacklightingMode_ConstantRGB);
-        EventVector_Set(EventVector_LedMapUpdateNeeded);
 
         return noneVar();
     }

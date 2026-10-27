@@ -5,7 +5,7 @@ source_root="${RELAY_COMPLETION_SOURCE_DIR:-$repo_root}"
 test_dir="$(mktemp -d)"
 trap 'rm -rf "$test_dir"' EXIT
 python3 - "$source_root" "$test_dir" <<'PY'
-import pathlib, sys
+import pathlib, re, sys
 root, out = map(pathlib.Path, sys.argv[1:])
 def function(text, marker):
     start = text.index(marker)
@@ -16,7 +16,10 @@ def function(text, marker):
         end += 1
     return text[start:end] + '\n'
 sender = (root / 'right/src/usb_report_sender.c').read_text()
-constants = sender[sender.index('#define THROTTLE_MAX_RETRIES'):sender.index('static void handleUltimateFail(')]
+constants = sender[sender.index('#define THROTTLE_MAX_'):sender.index('static void handleUltimateFail(')]
+if '#define THROTTLE_MAX_RETRIES' not in constants:
+    header = (root / 'right/src/usb_report_sender.h').read_text()
+    constants = re.search(r'#define THROTTLE_MAX_RETRIES\s+\d+', header)[0] + '\n' + constants
 (out / 'sender_under_test.inc').write_text(constants + ''.join(function(sender, signature) for signature in [
     'bool UsbReportSender_ResendOrGiveUp(', 'static bool mouseButtonsChanged(', 'static void sendActiveReports(']))
 semaphore = (root / 'right/src/usb_semaphore.c').read_text()
