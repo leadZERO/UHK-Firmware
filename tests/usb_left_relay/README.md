@@ -151,6 +151,15 @@ change requiring delivery. It covers completion ownership before main-thread
 drain, cancelled reports, stale route/USB generations and selected BLE delivery.
 The original completion path fails this regression.
 
+The relay completion regression is included in `run.sh` and can also run alone:
+
+```bash
+bash tests/usb_left_relay/run_relay_completion.sh
+python3 tests/usb_left_relay/run_relay_completion_baseline.py 07666ac93
+```
+
+It compiles the actual report sender/retry policy, semaphore, report comparisons, canonical-buffer switches and UHK relay delivery callback with the complete relay protocol/state machines. GPIO/report construction, scheduler, recorder and USB/inter-half timing are mocked. A sequence of failing sends reaches the sender's give-up state; a later accepted relay report has its legacy in-flight latch cleared by the real sender. The test waits behind the real pending-report gate, drops an acknowledgement to exercise immutable retries, then delivers the matching DONE and rebuilds an all-up report. Enter and left GUI releases must reach the host, clear the give-up state and advance the delivered baseline; mouse buttons and media controls must recover too. Duplicate, old-sequence and wrong-token DONE packets cannot acknowledge a newer report or advance its baseline twice. No pending report buffer is artificially overwritten. The baseline runner requires the original implementation to reach `host_released=0 given_up=1 confirmations=0`, reproducing the October 27 report mismatch. These transport-independent checks do not establish physical Bluetooth timing or replace paired hardware acceptance.
+
 The wireless integration regression compiles both UHK endpoint roles:
 
 ```bash

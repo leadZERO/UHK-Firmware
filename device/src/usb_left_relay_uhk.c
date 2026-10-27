@@ -151,7 +151,11 @@ static void delivered(void *user, uint8_t kind)
     (void)user;
     report_send_state_t *states[] = {
         &UsbSemaphore.keyboard, &UsbSemaphore.mouse, &UsbSemaphore.controls};
-    if (kind && kind <= RelayKind_Count && states[kind - 1]->inFlight) {
+    /* Relay_Receive already matched this DONE to the active token and pending
+     * sequence. The legacy sender may clear inFlight after an earlier give-up;
+     * that does not revoke the relay's ownership or its delivery confirmation.
+     * Pending relay reports block rebuilds, so advancing this baseline is safe. */
+    if (kind && kind <= RelayKind_Count) {
         UsbSemaphore_Release(states[kind - 1]);
         UsbScheduler_ReportDelivered(ReportSink_UsbLeft);
     }
